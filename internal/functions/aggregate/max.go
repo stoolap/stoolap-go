@@ -132,65 +132,47 @@ func isEqual(a, b interface{}) bool {
 	// Use type assertions for specific comparisons
 	switch a.(type) {
 	case bool:
-		if bBool, ok := b.(bool); ok {
-			return a.(bool) == bBool
-		}
-
+		bBool, ok := b.(bool)
+		return ok && a.(bool) == bBool
 	case int:
-		if bInt, ok := b.(int); ok {
-			return a.(int) == bInt
-		}
+		bInt, ok := b.(int)
+		return ok && a.(int) == bInt
 	case int8:
-		if bInt, ok := b.(int8); ok {
-			return a.(int8) == bInt
-		}
+		bInt, ok := b.(int8)
+		return ok && a.(int8) == bInt
 	case int16:
-		if bInt, ok := b.(int16); ok {
-			return a.(int16) == bInt
-		}
+		bInt, ok := b.(int16)
+		return ok && a.(int16) == bInt
 	case int32:
-		if bInt, ok := b.(int32); ok {
-			return a.(int32) == bInt
-		}
+		bInt, ok := b.(int32)
+		return ok && a.(int32) == bInt
 	case int64:
-		if bInt, ok := b.(int64); ok {
-			return a.(int64) == bInt
-		}
-
+		bInt, ok := b.(int64)
+		return ok && a.(int64) == bInt
 	case uint:
-		if bUint, ok := b.(uint); ok {
-			return a.(uint) == bUint
-		}
+		bUint, ok := b.(uint)
+		return ok && a.(uint) == bUint
 	case uint8:
-		if bUint, ok := b.(uint8); ok {
-			return a.(uint8) == bUint
-		}
+		bUint, ok := b.(uint8)
+		return ok && a.(uint8) == bUint
 	case uint16:
-		if bUint, ok := b.(uint16); ok {
-			return a.(uint16) == bUint
-		}
+		bUint, ok := b.(uint16)
+		return ok && a.(uint16) == bUint
 	case uint32:
-		if bUint, ok := b.(uint32); ok {
-			return a.(uint32) == bUint
-		}
+		bUint, ok := b.(uint32)
+		return ok && a.(uint32) == bUint
 	case uint64:
-		if bUint, ok := b.(uint64); ok {
-			return a.(uint64) == bUint
-		}
-
+		bUint, ok := b.(uint64)
+		return ok && a.(uint64) == bUint
 	case float32:
-		if bFloat, ok := b.(float32); ok {
-			return a.(float32) == bFloat
-		}
+		bFloat, ok := b.(float32)
+		return ok && a.(float32) == bFloat
 	case float64:
-		if bFloat, ok := b.(float64); ok {
-			return a.(float64) == bFloat
-		}
-
+		bFloat, ok := b.(float64)
+		return ok && a.(float64) == bFloat
 	case string:
-		if bStr, ok := b.(string); ok {
-			return a.(string) == bStr
-		}
+		bStr, ok := b.(string)
+		return ok && a.(string) == bStr
 	}
 
 	// Different types or non-primitive types that are not directly comparable

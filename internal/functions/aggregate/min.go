@@ -1,18 +1,17 @@
-/*
-Copyright 2025 Stoolap Contributors
+/* Copyright 2025 Stoolap Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-	http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
-limitations under the License.
-*/
+limitations under the License. */
+
 package aggregate
 
 import (
@@ -114,587 +113,161 @@ func init() {
 // isLessThan compares two values and returns true if a < b
 func isLessThan(a, b interface{}) bool {
 	// Handle nil cases
-	if a == nil && b == nil {
-		return false // equal, not less than
-	}
-	if a == nil {
-		return true // nil is less than any non-nil value
-	}
-	if b == nil {
-		return false // no value is less than nil
+	if a == nil || b == nil {
+		return a == nil && b != nil
 	}
 
-	// Handle time.Time specifically (common case)
+	// Handle time.Time specifically
 	if aTime, aOk := a.(time.Time); aOk {
 		if bTime, bOk := b.(time.Time); bOk {
 			return aTime.Before(bTime)
 		}
-		// time.Time is considered less than other types
-		return true
-	} else if _, bOk := b.(time.Time); bOk {
-		// Other types are greater than time.Time
-		return false
+		return true // time.Time < other types
+	}
+	if _, bOk := b.(time.Time); bOk {
+		return false // other types > time.Time
 	}
 
-	// Compare numeric types with proper type conversion
-	// Integer types
+	// Convert to comparable numeric values with precision safety
+	if result, ok := compareNumerics(a, b); ok {
+		return result
+	}
+
+	// Handle non-numeric types
 	switch a := a.(type) {
-	case int:
-		switch b := b.(type) {
-		case int:
-			return a < b
-		case int8:
-			return int8(a) < b
-		case int16:
-			return int16(a) < b
-		case int32:
-			return int32(a) < b
-		case int64:
-			return int64(a) < b
-		case uint:
-			if a < 0 {
-				return true
-			}
-			return uint(a) < b
-		case uint8:
-			if a < 0 {
-				return true
-			}
-			return uint8(a) < b
-		case uint16:
-			if a < 0 {
-				return true
-			}
-			return uint16(a) < b
-		case uint32:
-			if a < 0 {
-				return true
-			}
-			return uint32(a) < b
-		case uint64:
-			if a < 0 {
-				return true
-			}
-			return uint64(a) < b
-		case float32:
-			return float32(a) < b
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // ints > bools
-		case string:
-			return false // ints < strings
-		}
-	case int8:
-		switch b := b.(type) {
-		case int:
-			return int(a) < b
-		case int8:
-			return a < b
-		case int16:
-			return int16(a) < b
-		case int32:
-			return int32(a) < b
-		case int64:
-			return int64(a) < b
-		case uint:
-			if a < 0 {
-				return true
-			}
-			return uint(a) < b
-		case uint8:
-			if a < 0 {
-				return true
-			}
-			return uint8(a) < b
-		case uint16:
-			if a < 0 {
-				return true
-			}
-			return uint16(a) < b
-		case uint32:
-			if a < 0 {
-				return true
-			}
-			return uint32(a) < b
-		case uint64:
-			if a < 0 {
-				return true
-			}
-			return uint64(a) < b
-		case float32:
-			return float32(a) < b
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // ints > bools
-		case string:
-			return false // ints < strings
-		}
-	case int16:
-		switch b := b.(type) {
-		case int:
-			return int(a) < b
-		case int8:
-			return a < int16(b)
-		case int16:
-			return a < b
-		case int32:
-			return int32(a) < b
-		case int64:
-			return int64(a) < b
-		case uint:
-			if a < 0 {
-				return true
-			}
-			return uint(a) < b
-		case uint8:
-			if a < 0 {
-				return true
-			}
-			return uint8(a) < b
-		case uint16:
-			if a < 0 {
-				return true
-			}
-			return uint16(a) < b
-		case uint32:
-			if a < 0 {
-				return true
-			}
-			return uint32(a) < b
-		case uint64:
-			if a < 0 {
-				return true
-			}
-			return uint64(a) < b
-		case float32:
-			return float32(a) < b
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // ints > bools
-		case string:
-			return false // ints < strings
-		}
-	case int32:
-		switch b := b.(type) {
-		case int:
-			return int(a) < b
-		case int8:
-			return a < int32(b)
-		case int16:
-			return a < int32(b)
-		case int32:
-			return a < b
-		case int64:
-			return int64(a) < b
-		case uint:
-			if a < 0 {
-				return true
-			}
-			return uint(a) < b
-		case uint8:
-			if a < 0 {
-				return true
-			}
-			return uint8(a) < b
-		case uint16:
-			if a < 0 {
-				return true
-			}
-			return uint16(a) < b
-		case uint32:
-			if a < 0 {
-				return true
-			}
-			return uint32(a) < b
-		case uint64:
-			if a < 0 {
-				return true
-			}
-			return uint64(a) < b
-		case float32:
-			return float32(a) < b
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // ints > bools
-		case string:
-			return false // ints < strings
-		}
-	case int64:
-		switch b := b.(type) {
-		case int:
-			return a < int64(b)
-		case int8:
-			return a < int64(b)
-		case int16:
-			return a < int64(b)
-		case int32:
-			return a < int64(b)
-		case int64:
-			return a < b
-		case uint:
-			if a < 0 {
-				return true
-			}
-			return uint64(a) < uint64(b)
-		case uint8:
-			if a < 0 {
-				return true
-			}
-			return uint64(a) < uint64(b)
-		case uint16:
-			if a < 0 {
-				return true
-			}
-			return uint64(a) < uint64(b)
-		case uint32:
-			if a < 0 {
-				return true
-			}
-			return uint64(a) < uint64(b)
-		case uint64:
-			if a < 0 {
-				return true
-			}
-			return uint64(a) < b
-		case float32:
-			return float64(a) < float64(b)
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // ints > bools
-		case string:
-			return false // ints < strings
-		}
-	// Unsigned integer types
-	case uint:
-		switch b := b.(type) {
-		case int:
-			if b < 0 {
-				return false
-			}
-			return a < uint(b)
-		case int8:
-			if b < 0 {
-				return false
-			}
-			return a < uint(b)
-		case int16:
-			if b < 0 {
-				return false
-			}
-			return a < uint(b)
-		case int32:
-			if b < 0 {
-				return false
-			}
-			return a < uint(b)
-		case int64:
-			if b < 0 {
-				return false
-			}
-			return uint64(a) < uint64(b)
-		case uint:
-			return a < b
-		case uint8:
-			return a < uint(b)
-		case uint16:
-			return a < uint(b)
-		case uint32:
-			return a < uint(b)
-		case uint64:
-			return uint64(a) < b
-		case float32:
-			return float32(a) < b
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // uints > bools
-		case string:
-			return false // uints < strings
-		}
-	case uint8:
-		switch b := b.(type) {
-		case int:
-			if b < 0 {
-				return false
-			}
-			return a < uint8(b)
-		case int8:
-			if b < 0 {
-				return false
-			}
-			return a < uint8(b)
-		case int16:
-			if b < 0 {
-				return false
-			}
-			return a < uint8(b)
-		case int32:
-			if b < 0 {
-				return false
-			}
-			return a < uint8(b)
-		case int64:
-			if b < 0 {
-				return false
-			}
-			return uint64(a) < uint64(b)
-		case uint:
-			return uint(a) < b
-		case uint8:
-			return a < b
-		case uint16:
-			return uint16(a) < b
-		case uint32:
-			return uint32(a) < b
-		case uint64:
-			return uint64(a) < b
-		case float32:
-			return float32(a) < b
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // uints > bools
-		case string:
-			return false // uints < strings
-		}
-	case uint16:
-		switch b := b.(type) {
-		case int:
-			if b < 0 {
-				return false
-			}
-			return a < uint16(b)
-		case int8:
-			if b < 0 {
-				return false
-			}
-			return a < uint16(b)
-		case int16:
-			if b < 0 {
-				return false
-			}
-			return a < uint16(b)
-		case int32:
-			if b < 0 {
-				return false
-			}
-			return a < uint16(b)
-		case int64:
-			if b < 0 {
-				return false
-			}
-			return uint64(a) < uint64(b)
-		case uint:
-			return uint(a) < b
-		case uint8:
-			return a < uint16(b)
-		case uint16:
-			return a < b
-		case uint32:
-			return uint32(a) < b
-		case uint64:
-			return uint64(a) < b
-		case float32:
-			return float32(a) < b
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // uints > bools
-		case string:
-			return false // uints < strings
-		}
-	case uint32:
-		switch b := b.(type) {
-		case int:
-			if b < 0 {
-				return false
-			}
-			return a < uint32(b)
-		case int8:
-			if b < 0 {
-				return false
-			}
-			return a < uint32(b)
-		case int16:
-			if b < 0 {
-				return false
-			}
-			return a < uint32(b)
-		case int32:
-			if b < 0 {
-				return false
-			}
-			return a < uint32(b)
-		case int64:
-			if b < 0 {
-				return false
-			}
-			return uint64(a) < uint64(b)
-		case uint:
-			return uint(a) < b
-		case uint8:
-			return a < uint32(b)
-		case uint16:
-			return a < uint32(b)
-		case uint32:
-			return a < b
-		case uint64:
-			return uint64(a) < b
-		case float32:
-			return float32(a) < b
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // uints > bools
-		case string:
-			return false // uints < strings
-		}
-	case uint64:
-		switch b := b.(type) {
-		case int:
-			if b < 0 {
-				return false
-			}
-			return a < uint64(b)
-		case int8:
-			if b < 0 {
-				return false
-			}
-			return a < uint64(b)
-		case int16:
-			if b < 0 {
-				return false
-			}
-			return a < uint64(b)
-		case int32:
-			if b < 0 {
-				return false
-			}
-			return a < uint64(b)
-		case int64:
-			if b < 0 {
-				return false
-			}
-			return a < uint64(b)
-		case uint:
-			return a < uint64(b)
-		case uint8:
-			return a < uint64(b)
-		case uint16:
-			return a < uint64(b)
-		case uint32:
-			return a < uint64(b)
-		case uint64:
-			return a < b
-		case float32:
-			return float64(a) < float64(b)
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // uints > bools
-		case string:
-			return false // uints < strings
-		}
-	// Floating-point types
-	case float32:
-		switch b := b.(type) {
-		case int:
-			return a < float32(b)
-		case int8:
-			return a < float32(b)
-		case int16:
-			return a < float32(b)
-		case int32:
-			return a < float32(b)
-		case int64:
-			return float64(a) < float64(b)
-		case uint:
-			return a < float32(b)
-		case uint8:
-			return a < float32(b)
-		case uint16:
-			return a < float32(b)
-		case uint32:
-			return a < float32(b)
-		case uint64:
-			return float64(a) < float64(b)
-		case float32:
-			return a < b
-		case float64:
-			return float64(a) < b
-		case bool:
-			return false // floats > bools
-		case string:
-			return false // floats < strings
-		}
-	case float64:
-		switch b := b.(type) {
-		case int:
-			return a < float64(b)
-		case int8:
-			return a < float64(b)
-		case int16:
-			return a < float64(b)
-		case int32:
-			return a < float64(b)
-		case int64:
-			return a < float64(b)
-		case uint:
-			return a < float64(b)
-		case uint8:
-			return a < float64(b)
-		case uint16:
-			return a < float64(b)
-		case uint32:
-			return a < float64(b)
-		case uint64:
-			return a < float64(b)
-		case float32:
-			return a < float64(b)
-		case float64:
-			return a < b
-		case bool:
-			return false // floats > bools
-		case string:
-			return false // floats < strings
-		}
-	// Other basic types
 	case bool:
-		switch b := b.(type) {
-		case bool:
-			// false < true
-			return !a && b
-		default:
-			// bools come before other types (except time.Time)
-			return true
+		if b, ok := b.(bool); ok {
+			return !a && b // false < true
 		}
+		return true // bool < other types
 	case string:
-		switch b := b.(type) {
-		case string:
+		if b, ok := b.(string); ok {
 			return strings.Compare(a, b) < 0
-		case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-			// strings come after numeric and bool types
-			return false
-		default:
-			// strings come before other complex types
-			return true
+		}
+		// Check if b is a basic type (bool, numeric). string > basic types
+		return !isBasicType(b)
+	}
+
+	// For different types, compare type names for stable ordering
+	return typeNameOf(a) < typeNameOf(b)
+}
+
+// compareNumerics compares two numeric values with proper precision handling
+func compareNumerics(a, b interface{}) int {
+	switch any(a).(type) {
+	case int, int8, int16, int32, int64:
+		switch any(b).(type) {
+		case int, int8, int16, int32, int64:
+			return compareSigned(toInt64(a), toInt64(b))
+		case uint, uint8, uint16, uint32, uint64:
+			return compareSignedUnsigned(toInt64(a), toUint64(b))
+		case float32, float64:
+			return compareFloat(float64(toInt64(a)), toFloat64(b))
+		}
+	case uint, uint8, uint16, uint32, uint64:
+		switch any(b).(type) {
+		case int, int8, int16, int32, int64:
+			return compareSignedUnsigned(toInt64(b), toUint64(a))
+		case uint, uint8, uint16, uint32, uint64:
+			return compareUnsigned(toUint64(a), toUint64(b))
+		case float32, float64:
+			return compareFloat(float64(toUint64(a)), toFloat64(b))
+		}
+	case float32, float64:
+		switch any(b).(type) {
+		case int, int8, int16, int32, int64:
+			return compareFloat(toFloat64(a), float64(toInt64(b)))
+		case uint, uint8, uint16, uint32, uint64:
+			return compareFloat(toFloat64(a), float64(toUint64(b)))
+		case float32, float64:
+			return compareFloat(toFloat64(a), toFloat64(b))
 		}
 	}
 
-	// For different types that don't have specific comparisons,
-	// we use type name string comparison for a stable order
-	aType := typeNameOf(a)
-	bType := typeNameOf(b)
-	if aType != bType {
-		return aType < bType
-	}
+	panic("incompatible types for comparison: " + typeNameOf(a) + " and " + typeNameOf(b))
+}
 
-	// Final fallback - should rarely get here
+func toInt64(v interface{}) int64 {
+	switch x := any(v).(type) {
+	case int:
+		return int64(x)
+	case int8:
+		return int64(x)
+	case int16:
+		return int64(x)
+	case int32:
+		return int64(x)
+	case int64:
+		return x
+	}
+	panic("not an int type")
+}
+
+func toUint64(v interface{}) uint64 {
+	switch x := any(v).(type) {
+	case uint:
+		return uint64(x)
+	case uint8:
+		return uint64(x)
+	case uint16:
+		return uint64(x)
+	case uint32:
+		return uint64(x)
+	case uint64:
+		return x
+	}
+	panic("not a uint type")
+}
+
+func compareSigned(a, b int64) int {
+	if a < b {
+		return -1
+	} else if a > b {
+		return 1
+	}
+	return 0
+}
+
+func compareUnsigned(a, b uint64) int {
+	if a < b {
+		return -1
+	} else if a > b {
+		return 1
+	}
+	return 0
+}
+
+// compareSignedUnsigned compares a signed int64 and an unsigned uint64
+func compareSignedUnsigned(a int64, b uint64) int {
+	if a < 0 {
+		// Negative int64 is always less than any uint64 (>=0)
+		return -1
+	}
+	// a is non-negative, safe to cast to uint64
+	ua := uint64(a)
+	if ua < b {
+		return -1
+	} else if ua > b {
+		return 1
+	}
+	return 0
+}
+
+func compareFloat(a, b float64) int {
+	if a < b {
+		return -1
+	} else if a > b {
+		return 1
+	}
+	return 0
+}
+
+// isBasicType checks if a type is a basic Go type
+func isBasicType(v interface{}) bool {
+	switch v.(type) {
+	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return true
+	}
 	return false
 }
 
