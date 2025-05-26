@@ -59,16 +59,21 @@ type VersionStore struct {
 
 	// Hot/Cold data management
 	accessTimes *fastmap.SegmentInt64Map[int64] // Maps rowID -> last access timestamp
+
+	// Write-write conflict detection for SNAPSHOT isolation
+	// Maps rowID -> commit timestamp of last committed write
+	writeTimestamps *fastmap.SegmentInt64Map[int64]
 }
 
 // NewVersionStore creates a new version store
 func NewVersionStore(tableName string, engine *MVCCEngine) *VersionStore {
 	vs := &VersionStore{
-		versions:    fastmap.NewSegmentInt64Map[*RowVersion](8, 1000), // Start with reasonable capacity
-		tableName:   tableName,
-		indexes:     make(map[string]storage.Index),
-		engine:      engine,
-		accessTimes: fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize access times tracking
+		versions:        fastmap.NewSegmentInt64Map[*RowVersion](8, 1000), // Start with reasonable capacity
+		tableName:       tableName,
+		indexes:         make(map[string]storage.Index),
+		engine:          engine,
+		accessTimes:     fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize access times tracking
+		writeTimestamps: fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize write timestamps for conflict detection
 	}
 	// Initialize atomic.Bool to false (not closed)
 	vs.closed.Store(false)
@@ -145,43 +150,47 @@ func (vs *VersionStore) AddVersion(rowID int64, version RowVersion) {
 		}
 		vs.versions.Set(rowID, newVersion)
 
+		// Track write timestamp for conflict detection
+		// For SNAPSHOT isolation, we track the transaction ID that wrote this row
+		if vs.engine != nil && vs.engine.registry != nil {
+			// Use the current time when the write is being committed
+			currentTime := GetFastTimestamp()
+			vs.writeTimestamps.Set(rowID, currentTime)
+		}
+
 		// Update columnar indexes with the new version
 		vs.UpdateColumnarIndexes(rowID, version)
 
-		// Record operation in WAL if persistence is enabled and this isn't a recovery operation
-		if vs.engine != nil && vs.engine.persistence != nil &&
-			vs.engine.persistence.IsEnabled() && version.TxnID >= 0 {
-			// Only write to WAL if this is a committed transaction
-			if vs.engine.registry.IsDirectlyVisible(version.TxnID) {
-				// Use the safer async helper method which handles all the details
-				err := vs.engine.persistence.RecordDMLOperation(version.TxnID, vs.tableName, rowID, version)
-				if err != nil {
-					// Handle error if needed
-					fmt.Printf("Error: recording DML operation: %v\n", err)
-				}
-			}
-		}
+		// WAL recording is now handled in transaction.Commit() after the transaction
+		// is marked as committed. This ensures all DML operations are recorded
+		// atomically as part of the commit process.
 
 	} else {
 		// Store old deleted status for index updates
 		oldIsDeleted := rv.IsDeleted
-		oldTxnID := rv.TxnID
 
-		// If we already have a version for this row and we're replacing it,
-		// we need to clean up any references it might have to avoid memory leaks
-		if rv.Data != nil {
-			// Clear references to help garbage collection
-			rv.Data = nil
+		// Create a new version to avoid data races
+		// We cannot modify rv directly as it might be accessed concurrently
+		newVersion := &RowVersion{
+			TxnID:      rv.TxnID, // Keep the original TxnID
+			IsDeleted:  version.IsDeleted,
+			RowID:      version.RowID,
+			CreateTime: version.CreateTime,
 		}
 
-		// Update the fields of the existing version
-		rv.TxnID = version.TxnID
-		rv.IsDeleted = version.IsDeleted
-		rv.RowID = version.RowID
-		rv.CreateTime = version.CreateTime
-
 		if !version.IsDeleted {
-			rv.Data = version.Data
+			newVersion.Data = version.Data
+		}
+
+		// Atomically replace the old version with the new one
+		vs.versions.Set(rowID, newVersion)
+
+		// Track write timestamp for conflict detection
+		// For SNAPSHOT isolation, we track the transaction ID that wrote this row
+		if vs.engine != nil && vs.engine.registry != nil {
+			// Use the current time when the write is being committed
+			currentTime := GetFastTimestamp()
+			vs.writeTimestamps.Set(rowID, currentTime)
 		}
 
 		// Update columnar indexes
@@ -203,20 +212,9 @@ func (vs *VersionStore) AddVersion(rowID int64, version RowVersion) {
 			}
 		}
 
-		// Record update in WAL if persistence is enabled and this isn't a recovery operation
-		// Only consider this for actual changes by real transactions
-		if vs.engine != nil && vs.engine.persistence != nil &&
-			vs.engine.persistence.IsEnabled() && version.TxnID >= 0 && oldTxnID != version.TxnID {
-			// Only write to WAL if this is a committed transaction
-			if vs.engine.registry.IsDirectlyVisible(version.TxnID) {
-				// Use the safer async helper method which handles all the details
-				err := vs.engine.persistence.RecordDMLOperation(version.TxnID, vs.tableName, rowID, version)
-				if err != nil {
-					// Handle error if needed
-					fmt.Printf("Error: recording DML operation: %v\n", err)
-				}
-			}
-		}
+		// WAL recording is now handled in transaction.Commit() after the transaction
+		// is marked as committed. This ensures all DML operations are recorded
+		// atomically as part of the commit process.
 	}
 }
 
@@ -1443,6 +1441,21 @@ func (vs *VersionStore) RemoveIndex(indexName string) error {
 	}
 
 	return fmt.Errorf("index %s not found", indexName)
+}
+
+// CheckWriteConflict checks if any of the given rows have been modified after the transaction's begin timestamp
+// This is used for write-write conflict detection in SNAPSHOT isolation
+func (vs *VersionStore) CheckWriteConflict(rowIDs []int64, txnBeginTime int64) bool {
+	// For SNAPSHOT isolation, check if any rows were written after this transaction began
+	for _, rowID := range rowIDs {
+		if lastWriteTime, exists := vs.writeTimestamps.Get(rowID); exists {
+			if lastWriteTime > txnBeginTime {
+				// This row was written after our transaction began - conflict!
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // UpdateColumnarIndexes updates all columnar indexes with a new row version

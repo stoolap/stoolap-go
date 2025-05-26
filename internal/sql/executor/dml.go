@@ -775,11 +775,15 @@ func (e *Executor) executeUpdateWithContext(ctx context.Context, tx storage.Tran
 
 	// Create a setter function that updates the values
 	setter := func(row storage.Row) (storage.Row, bool) {
+		// Create a copy of the row to avoid races when modifying in place
+		updatedRow := make(storage.Row, len(row))
+		copy(updatedRow, row)
+
 		// Create row context for column references in expressions
 		rowContext := make(map[string]interface{})
 		for i, col := range schema.Columns {
-			if i < len(row) && row[i] != nil {
-				rowContext[col.Name] = row[i].AsInterface()
+			if i < len(updatedRow) && updatedRow[i] != nil {
+				rowContext[col.Name] = updatedRow[i].AsInterface()
 			}
 		}
 
@@ -805,10 +809,10 @@ func (e *Executor) executeUpdateWithContext(ctx context.Context, tx storage.Tran
 			}
 
 			// Convert to column value and update
-			row[colIndex] = storage.ValueToColumnValue(value, colType)
+			updatedRow[colIndex] = storage.ValueToColumnValue(value, colType)
 		}
 
-		return row, true
+		return updatedRow, true
 	}
 
 	// Create a storage-level expression from the SQL WHERE clause

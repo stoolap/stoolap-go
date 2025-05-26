@@ -16,6 +16,7 @@ limitations under the License.
 package mvcc
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,8 @@ type TransactionRegistry struct {
 	committedTransactions *fastmap.SegmentInt64Map[int64] // txnID -> commit timestamp
 	isolationLevel        storage.IsolationLevel
 	accepting             atomic.Bool // Flag to control if new transactions are accepted
+
+	mu sync.RWMutex // RWMutex for additional safety in some operations
 }
 
 // NewTransactionRegistry creates a new transaction registry
@@ -51,11 +54,17 @@ func NewTransactionRegistry() *TransactionRegistry {
 
 // SetIsolationLevel sets the isolation level for this registry
 func (r *TransactionRegistry) SetIsolationLevel(level storage.IsolationLevel) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.isolationLevel = level
 }
 
 // GetIsolationLevel returns the current isolation level
 func (r *TransactionRegistry) GetIsolationLevel() storage.IsolationLevel {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	return r.isolationLevel
 }
 
@@ -143,6 +152,17 @@ func (r *TransactionRegistry) GetCommitTimestamp(txnID int64) (int64, bool) {
 	return r.committedTransactions.Get(txnID)
 }
 
+// GetTransactionBeginTime gets the begin timestamp for a transaction
+func (r *TransactionRegistry) GetTransactionBeginTime(txnID int64) int64 {
+	// Thread-safe get with SegmentInt64Map
+	beginTS, exists := r.activeTransactions.Get(txnID)
+	if exists {
+		return beginTS
+	}
+	// If not active, return 0 (transaction may have already committed/aborted)
+	return 0
+}
+
 // IsDirectlyVisible is an optimized version that only checks common cases
 // for better performance in bulk operations. It only returns true for
 // already committed transactions (in ReadCommitted mode).
@@ -155,7 +175,11 @@ func (r *TransactionRegistry) IsDirectlyVisible(versionTxnID int64) bool {
 
 	// Fast path for ReadCommitted isolation level (the default)
 	// where any committed transaction is visible to all other transactions
-	if r.isolationLevel == storage.ReadCommitted {
+	r.mu.RLock()
+	isolationLevel := r.isolationLevel
+	r.mu.RUnlock()
+
+	if isolationLevel == storage.ReadCommitted {
 		// Thread-safe check with SegmentInt64Map
 		// This is a hot path that benefits from being as fast as possible
 		return r.committedTransactions.Has(versionTxnID)
@@ -181,7 +205,11 @@ func (r *TransactionRegistry) IsVisible(versionTxnID int64, viewerTxnID int64) b
 	}
 
 	// Fast path for common READ COMMITTED level (most databases default to this)
-	if r.isolationLevel == storage.ReadCommitted {
+	r.mu.RLock()
+	isolationLevel := r.isolationLevel
+	r.mu.RUnlock()
+
+	if isolationLevel == storage.ReadCommitted {
 		// In READ COMMITTED, only committed transactions are visible
 		// This delegation is inlinable and very efficient
 		return r.IsDirectlyVisible(versionTxnID)
@@ -224,7 +252,11 @@ func (r *TransactionRegistry) IsVisible(versionTxnID int64, viewerTxnID int64) b
 func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 	// In READ COMMITTED mode, we cannot clean up committed transactions
 	// because IsDirectlyVisible checks if the transaction exists in committedTransactions
-	if r.isolationLevel == storage.ReadCommitted {
+	r.mu.RLock()
+	isolationLevel := r.isolationLevel
+	r.mu.RUnlock()
+
+	if isolationLevel == storage.ReadCommitted {
 		return 0
 	}
 
@@ -237,7 +269,7 @@ func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 
 	// If we're in snapshot isolation mode, we need to preserve transactions
 	// that might still be visible to active transactions
-	if r.isolationLevel == storage.SnapshotIsolation {
+	if isolationLevel == storage.SnapshotIsolation {
 		activeSet = make(map[int64]struct{})
 
 		// Collect all active transaction IDs into our map
@@ -269,7 +301,7 @@ func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 		}
 
 		// Skip transactions that are still active
-		if r.isolationLevel == storage.SnapshotIsolation {
+		if isolationLevel == storage.SnapshotIsolation {
 			if _, isActive := activeSet[txnID]; isActive {
 				return true
 			}

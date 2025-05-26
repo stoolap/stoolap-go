@@ -37,6 +37,9 @@ type Executor struct {
 	queryCache       *QueryCache
 
 	vectorizedMode bool // Whether to use vectorized execution when appropriate
+
+	// Connection-level default isolation level
+	defaultIsolationLevel storage.IsolationLevel
 }
 
 // parameterContextKey is the context key for parameter
@@ -52,16 +55,22 @@ func NewExecutor(engine storage.Engine) *Executor {
 	queryCache := NewQueryCache(1000)
 
 	return &Executor{
-		engine:           engine,
-		functionRegistry: registry,
-		queryCache:       queryCache,
-		vectorizedMode:   false, // Disabled by default, can be enabled with EnableVectorizedMode
+		engine:                engine,
+		functionRegistry:      registry,
+		queryCache:            queryCache,
+		vectorizedMode:        false,                 // Disabled by default, can be enabled with EnableVectorizedMode
+		defaultIsolationLevel: storage.ReadCommitted, // Default to READ COMMITTED
 	}
 }
 
 // EnableVectorizedMode enables vectorized execution for appropriate query types
 func (e *Executor) EnableVectorizedMode() {
 	e.vectorizedMode = true
+}
+
+// GetDefaultIsolationLevel returns the connection's default isolation level
+func (e *Executor) GetDefaultIsolationLevel() storage.IsolationLevel {
+	return e.defaultIsolationLevel
 }
 
 // DisableVectorizedMode disables vectorized execution
@@ -110,11 +119,8 @@ func (e *Executor) executeSet(stmt *parser.SetStatement) error {
 			return fmt.Errorf("unsupported isolation level: %s", level)
 		}
 
-		// Set the isolation level at the engine level
-		if err := e.engine.SetIsolationLevel(isolationLevel); err != nil {
-			return fmt.Errorf("failed to set isolation level: %v", err)
-		}
-
+		// Set the isolation level for this connection/executor only
+		e.defaultIsolationLevel = isolationLevel
 		return nil
 	case "VECTORIZED":
 		// Extract the value
@@ -761,12 +767,10 @@ func (e *Executor) ExecuteWithParams(ctx context.Context, tx storage.Transaction
 	var shouldAutoCommit bool
 	var err error
 
-	currentIsolationLevel := e.engine.GetIsolationLevel()
-
 	if tx == nil {
-		// Begin a transaction
+		// Begin a transaction with the executor's default isolation level
 		sqlLevel := sql.LevelReadCommitted
-		if currentIsolationLevel == storage.SnapshotIsolation {
+		if e.defaultIsolationLevel == storage.SnapshotIsolation {
 			sqlLevel = sql.LevelSnapshot
 		}
 

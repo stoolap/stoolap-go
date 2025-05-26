@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -461,7 +462,7 @@ func (wm *WALManager) Close() error {
 		if len(bufferData) > 0 && wm.walFile != nil {
 			// Write directly to file
 			if _, err := wm.walFile.Write(bufferData); err != nil {
-				fmt.Printf("Error: during final WAL flush: %v\n", err)
+				log.Printf("Error: during final WAL flush: %v\n", err)
 			} else {
 				OptimizedSync(wm.walFile)
 			}
@@ -491,7 +492,7 @@ func (wm *WALManager) Close() error {
 		// Close file
 		if err := wm.walFile.Close(); err != nil {
 			closeErr = fmt.Errorf("error closing WAL file: %w", err)
-			fmt.Printf("Error: closing WAL file: %v\n", err)
+			log.Printf("Error: closing WAL file: %v\n", err)
 		}
 
 		// Clear reference regardless of outcome
@@ -500,7 +501,7 @@ func (wm *WALManager) Close() error {
 		// Delete empty WAL file if it exists
 		if fileIsEmpty && filePath != "" {
 			if err := os.Remove(filePath); err != nil {
-				fmt.Printf("Warning: Failed to remove empty WAL file: %v\n", err)
+				log.Printf("Warning: Failed to remove empty WAL file: %v\n", err)
 			}
 		}
 	}
@@ -529,7 +530,7 @@ func (wm *WALManager) SyncLocked() error {
 	// Log slow syncs
 	duration := time.Since(startTime)
 	if duration > 100*time.Millisecond {
-		fmt.Printf("Warning: Slow disk sync: %v\n", duration)
+		log.Printf("Warning: Slow disk sync: %v\n", duration)
 	}
 
 	return err
@@ -545,7 +546,7 @@ func (wm *WALManager) Sync() error {
 	// Use a non-blocking attempt first to avoid potential deadlocks
 	if !wm.mu.TryLock() {
 		// If we can't get the lock immediately, log and use regular Lock
-		fmt.Println("Warning: Sync lock contention, waiting for lock")
+		log.Println("Warning: Sync lock contention, waiting for lock")
 		wm.mu.Lock()
 	}
 
@@ -691,7 +692,7 @@ func (wm *WALManager) AppendEntryLocked(entry WALEntry) (uint64, error) {
 					// Log slow syncs
 					syncTime := time.Since(syncStart)
 					if syncTime > 100*time.Millisecond {
-						fmt.Printf("Warning: WAL sync took %v during buffer flush\n", syncTime)
+						log.Printf("Warning: WAL sync took %v during buffer flush\n", syncTime)
 					}
 
 					if err != nil {
@@ -718,7 +719,7 @@ func (wm *WALManager) AppendEntryLocked(entry WALEntry) (uint64, error) {
 		// Log slow syncs
 		syncTime := time.Since(syncStart)
 		if syncTime > 100*time.Millisecond {
-			fmt.Printf("Warning: WAL sync took %v for large entry\n", syncTime)
+			log.Printf("Warning: WAL sync took %v for large entry\n", syncTime)
 		}
 
 		if err != nil {
@@ -847,7 +848,7 @@ func (wm *WALManager) writeToFile(data []byte) error {
 	// Log slow writes for diagnostic purposes
 	writeTime := time.Since(startTime)
 	if writeTime > 100*time.Millisecond {
-		fmt.Printf("Warning: Slow WAL write: %v for %d bytes\n", writeTime, len(data))
+		log.Printf("Warning: Slow WAL write: %v for %d bytes\n", writeTime, len(data))
 	}
 
 	return nil
@@ -1172,7 +1173,7 @@ func (wm *WALManager) createConsistentCheckpoint(lsn uint64, isConsistent bool) 
 	// First flush any pending writes
 	err := wm.Flush()
 	if err != nil {
-		fmt.Printf("Error: flushing WAL before checkpoint: %v\n", err)
+		log.Printf("Error: flushing WAL before checkpoint: %v\n", err)
 		return
 	}
 
@@ -1186,7 +1187,7 @@ func (wm *WALManager) createConsistentCheckpoint(lsn uint64, isConsistent bool) 
 	// Sync current WAL file
 	err = OptimizedSync(wm.walFile)
 	if err != nil {
-		fmt.Printf("Error: syncing WAL before checkpoint: %v\n", err)
+		log.Printf("Error: syncing WAL before checkpoint: %v\n", err)
 		wm.mu.Unlock()
 		return
 	}
@@ -1207,7 +1208,7 @@ func (wm *WALManager) createConsistentCheckpoint(lsn uint64, isConsistent bool) 
 	// Write checkpoint metadata
 	err = wm.writeEnhancedCheckpointMeta(currentWAL, currentLSN, isReallyConsistent, activeTransactions)
 	if err != nil {
-		fmt.Printf("Error: writing checkpoint metadata: %v\n", err)
+		log.Printf("Error: writing checkpoint metadata: %v\n", err)
 		return
 	}
 }
@@ -1452,7 +1453,7 @@ func (wm *WALManager) TruncateWAL(upToLSN uint64) error {
 	if walFilePath != newWalPath {
 		// Try to remove the old file (this might fail on Windows if file is in use)
 		if err := os.Remove(walFilePath); err != nil {
-			fmt.Printf("Warning: Could not remove old WAL file %s: %v\n", walFilePath, err)
+			log.Printf("Warning: Could not remove old WAL file %s: %v\n", walFilePath, err)
 		}
 	}
 

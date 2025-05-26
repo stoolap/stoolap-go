@@ -19,6 +19,7 @@ package mvcc
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -154,7 +155,7 @@ func (dvs *DiskVersionStore) CreateSnapshot() error {
 	dvs.versionStore.versions.ForEach(func(rowID int64, version *RowVersion) bool {
 		// Verify that map key matches the RowID inside the version
 		if rowID != version.RowID {
-			fmt.Printf("WARNING: Version store RowID (%d) doesn't match RowVersion.RowID (%d)\n",
+			log.Printf("WARNING: Version store RowID (%d) doesn't match RowVersion.RowID (%d)\n",
 				rowID, version.RowID)
 			return true // Continue processing
 		}
@@ -178,7 +179,7 @@ func (dvs *DiskVersionStore) CreateSnapshot() error {
 		// Process batch when full
 		if len(batch) >= DefaultBatchSize {
 			if err := appender.AppendBatch(batch); err != nil {
-				fmt.Printf("Error: appending batch: %v\n", err)
+				log.Printf("Error: appending batch: %v\n", err)
 				lastErr = err
 				return false // Stop iteration on error
 			}
@@ -266,7 +267,7 @@ func (dvs *DiskVersionStore) CreateSnapshot() error {
 			// Process batch when full
 			if len(batch) >= DefaultBatchSize {
 				if err := appender.AppendBatch(batch); err != nil {
-					fmt.Printf("Error: appending disk batch: %v\n", err)
+					log.Printf("Error: appending disk batch: %v\n", err)
 					lastErr = err
 					return false // Stop iteration on error
 				}
@@ -359,7 +360,7 @@ func (dvs *DiskVersionStore) CreateSnapshot() error {
 		// This removes entries that are already captured in the snapshot
 		err := dvs.versionStore.engine.persistence.wal.TruncateWAL(currentLSN)
 		if err != nil {
-			fmt.Printf("Warning: Failed to truncate WAL after checkpoint: %v\n", err)
+			log.Printf("Warning: Failed to truncate WAL after checkpoint: %v\n", err)
 			// Continue despite error since this is not critical
 		}
 	}
@@ -521,7 +522,7 @@ func (dvs *DiskVersionStore) LoadSnapshots() error {
 		metaFile := metadataFiles[len(metadataFiles)-1]
 		err := dvs.loadMetadataFile(metaFile)
 		if err != nil {
-			fmt.Printf("Warning: Failed to load metadata %s: %v\n", metaFile, err)
+			log.Printf("Warning: Failed to load metadata %s: %v\n", metaFile, err)
 			// Continue despite the error, as we might still be able to load the snapshot
 		}
 	}
@@ -536,16 +537,16 @@ func (dvs *DiskVersionStore) LoadSnapshots() error {
 
 	// If the newest snapshot fails, try older ones in reverse order
 	if loadErr != nil {
-		fmt.Printf("Warning: Failed to load newest snapshot %s: %v\n", newestSnapshot, loadErr)
+		log.Printf("Warning: Failed to load newest snapshot %s: %v\n", newestSnapshot, loadErr)
 
 		// Try older snapshots as fallback, from newest to oldest
 		for i := len(snapshotFiles) - 2; i >= 0; i-- {
 			reader, loadErr = NewDiskReader(snapshotFiles[i])
 			if loadErr == nil {
-				fmt.Printf("Successfully loaded fallback snapshot %s\n", snapshotFiles[i])
+				log.Printf("Successfully loaded fallback snapshot %s\n", snapshotFiles[i])
 				break
 			}
-			fmt.Printf("Warning: Failed to load fallback snapshot %s: %v\n", snapshotFiles[i], loadErr)
+			log.Printf("Warning: Failed to load fallback snapshot %s: %v\n", snapshotFiles[i], loadErr)
 		}
 	}
 
@@ -596,7 +597,7 @@ func (dvs *DiskVersionStore) LoadSnapshots() error {
 						err := index.Add(values, rowID, 0)
 						if err != nil {
 							// Log error but continue processing
-							fmt.Printf("Error adding row %d to index %s: %v\n", rowID, index.Name(), err)
+							log.Printf("Error adding row %d to index %s: %v\n", rowID, index.Name(), err)
 						}
 
 						rowCount++
@@ -689,7 +690,7 @@ func (dvs *DiskVersionStore) loadMetadataFile(path string) error {
 	autoIncValue, err := reader.ReadInt64()
 	if err != nil {
 		// For backward compatibility with older snapshots
-		fmt.Printf("Info: Auto-increment value not found in snapshot, using default\n")
+		log.Printf("Info: Auto-increment value not found in snapshot, using default\n")
 	} else if autoIncValue > 0 {
 		// Update the version store's auto-increment counter if the snapshot value is higher
 		dvs.versionStore.SetAutoIncrementCounter(autoIncValue)

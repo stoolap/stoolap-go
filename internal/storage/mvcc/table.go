@@ -18,6 +18,7 @@ package mvcc
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -1680,12 +1681,12 @@ func (mt *MVCCTable) CreateIndex(indexName string, columns []string, isUnique bo
 		// SerializeIndexMetadata already supports multi-column indexes
 		indexData, err := SerializeIndexMetadata(index)
 		if err != nil {
-			fmt.Printf("Warning: Failed to serialize index metadata for WAL: %v\n", err)
+			log.Printf("Warning: Failed to serialize index metadata for WAL: %v\n", err)
 		} else {
 			// Record the index creation in WAL
 			err = mt.engine.persistence.RecordIndexOperation(mt.versionStore.tableName, WALCreateIndex, indexData)
 			if err != nil {
-				fmt.Printf("Warning: Failed to record index creation in WAL: %v\n", err)
+				log.Printf("Warning: Failed to record index creation in WAL: %v\n", err)
 			}
 		}
 	}
@@ -1955,7 +1956,7 @@ func (mt *MVCCTable) CreateColumnarIndex(columnName string, isUnique bool, custo
 		// Serialize the index metadata for WAL recording
 		indexData, serErr := SerializeIndexMetadata(index)
 		if serErr != nil {
-			fmt.Printf("Warning: Failed to serialize index metadata for WAL: %v\n", serErr)
+			log.Printf("Warning: Failed to serialize index metadata for WAL: %v\n", serErr)
 			return nil
 		}
 
@@ -1968,7 +1969,7 @@ func (mt *MVCCTable) CreateColumnarIndex(columnName string, isUnique bool, custo
 
 		if err != nil {
 			// Log the error but don't fail the operation since the index was already created
-			fmt.Printf("Warning: Failed to record index creation in WAL: %v\n", err)
+			log.Printf("Warning: Failed to record index creation in WAL: %v\n", err)
 		}
 	}
 
@@ -2091,7 +2092,7 @@ func (mt *MVCCTable) DropColumnarIndex(indexIdentifier string) error {
 
 		if err != nil {
 			// Log the error but don't fail the operation since the index was already dropped
-			fmt.Printf("Warning: Failed to record index drop in WAL: %v\n", err)
+			log.Printf("Warning: Failed to record index drop in WAL: %v\n", err)
 		}
 	}
 

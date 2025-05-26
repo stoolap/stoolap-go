@@ -21,9 +21,12 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
+	sqlexecutor "github.com/stoolap/stoolap/internal/sql/executor"
+	"github.com/stoolap/stoolap/internal/storage"
 	"github.com/stoolap/stoolap/pkg"
 
 	// Import database storage engine
@@ -134,8 +137,9 @@ func (d *Driver) Open(name string) (driver.Conn, error) {
 		stmts:   make(map[string]*Stmt),
 	}
 
-	// Initialize the executor
-	conn.executor = entry.db.Executor()
+	// Create a new executor instance for this connection
+	// Each connection needs its own executor to maintain independent isolation levels
+	conn.executor = sqlexecutor.NewExecutor(entry.db.Engine())
 
 	return conn, nil
 }
@@ -293,7 +297,7 @@ func (c *Conn) Close() error {
 
 		err := entry.db.Close()
 		if err != nil {
-			fmt.Printf("Error: closing database: %v\n", err)
+			log.Printf("Error: closing database: %v\n", err)
 		}
 
 		c.driver.connsMu.Lock()
@@ -378,7 +382,14 @@ func (c *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 	isolationLevel := sql.LevelReadCommitted
 
 	if opts.Isolation != driver.IsolationLevel(0) {
+		// Use the explicitly specified isolation level
 		isolationLevel = sql.IsolationLevel(opts.Isolation)
+	} else {
+		// Use the executor's default isolation level
+		executorLevel := c.executor.GetDefaultIsolationLevel()
+		if executorLevel == storage.SnapshotIsolation {
+			isolationLevel = sql.LevelSnapshot
+		}
 	}
 
 	// Begin a transaction in the underlying engine with isolation level in context

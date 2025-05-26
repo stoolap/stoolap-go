@@ -23,7 +23,7 @@ import (
 	"strings"
 	"sync"
 
-	sqlexecutor "github.com/stoolap/stoolap/internal/sql"
+	sqlexecutor "github.com/stoolap/stoolap/internal/sql/executor"
 	"github.com/stoolap/stoolap/internal/storage"
 
 	// Import the storage engine
@@ -162,6 +162,7 @@ type Executor interface {
 	EnableVectorizedMode()
 	DisableVectorizedMode()
 	IsVectorizedModeEnabled() bool
+	GetDefaultIsolationLevel() storage.IsolationLevel
 }
 
 // Executor returns the SQL executor for the database
@@ -173,22 +174,9 @@ func (db *DB) Executor() Executor {
 
 // Exec executes a query without returning any rows
 func (db *DB) Exec(ctx context.Context, query string) (sql.Result, error) {
-	// Execute the query with the provided context
-	tx, err := db.engine.BeginTx(ctx, sql.LevelReadCommitted)
+	// Execute the query with nil transaction - Execute will handle it
+	result, err := db.executor.Execute(ctx, nil, query)
 	if err != nil {
-		return nil, err
-	}
-
-	// Execute the query
-	result, err := db.executor.Execute(ctx, tx, query)
-	if err != nil {
-		// Explicitly rollback the transaction on error
-		tx.Rollback()
-		return nil, err
-	}
-
-	// Commit the transaction
-	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
@@ -244,9 +232,9 @@ type Row interface {
 // Stmt represents a prepared statement
 type Stmt interface {
 	// ExecContext executes the statement
-	ExecContext(ctx context.Context, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, args ...driver.NamedValue) (sql.Result, error)
 	// QueryContext executes a query
-	QueryContext(ctx context.Context, args ...interface{}) (Rows, error)
+	QueryContext(ctx context.Context, args ...driver.NamedValue) (Rows, error)
 	// Close closes the statement
 	Close() error
 }
@@ -258,9 +246,9 @@ type Tx interface {
 	// Rollback aborts the transaction
 	Rollback() error
 	// ExecContext executes a query in the transaction
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...driver.NamedValue) (sql.Result, error)
 	// QueryContext executes a query in the transaction
-	QueryContext(ctx context.Context, query string, args ...interface{}) (Rows, error)
+	QueryContext(ctx context.Context, query string, args ...driver.NamedValue) (Rows, error)
 	// Prepare creates a prepared statement for the transaction
 	Prepare(query string) (Stmt, error)
 }
@@ -268,10 +256,11 @@ type Tx interface {
 // Implementation types
 
 type rows struct {
-	result storage.Result
-	tx     storage.Transaction
-	ctx    context.Context
-	closed bool
+	result          storage.Result
+	tx              storage.Transaction
+	ctx             context.Context
+	closed          bool
+	ownsTransaction bool // true if rows should commit/rollback tx on close
 }
 
 func (r *rows) Next() bool {
@@ -296,7 +285,11 @@ func (r *rows) Close() error {
 	if err := r.result.Close(); err != nil {
 		return err
 	}
-	return r.tx.Commit()
+	// Only commit if we own the transaction and have a transaction
+	if r.ownsTransaction && r.tx != nil {
+		return r.tx.Commit()
+	}
+	return nil
 }
 
 func (r *rows) Columns() []string {
@@ -335,44 +328,30 @@ func (t *transaction) Rollback() error {
 	return t.tx.Rollback()
 }
 
-func (t *transaction) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	namedValues := make([]driver.NamedValue, len(args))
-	for i, arg := range args {
-		namedValues[i] = driver.NamedValue{
-			Ordinal: i + 1,
-			Value:   arg,
-		}
-	}
-
-	result, err := t.db.executor.ExecuteWithParams(ctx, t.tx, query, namedValues)
+func (t *transaction) ExecContext(ctx context.Context, query string, args ...driver.NamedValue) (sql.Result, error) {
+	result, err := t.db.executor.ExecuteWithParams(ctx, t.tx, query, args)
 	if err != nil {
 		return nil, err
 	}
 
+	defer result.Close()
 	return &execResult{
 		rowsAffected: result.RowsAffected(),
 		lastInsertID: result.LastInsertID(),
 	}, nil
 }
 
-func (t *transaction) QueryContext(ctx context.Context, query string, args ...interface{}) (Rows, error) {
-	namedValues := make([]driver.NamedValue, len(args))
-	for i, arg := range args {
-		namedValues[i] = driver.NamedValue{
-			Ordinal: i + 1,
-			Value:   arg,
-		}
-	}
-
-	result, err := t.db.executor.ExecuteWithParams(ctx, t.tx, query, namedValues)
+func (t *transaction) QueryContext(ctx context.Context, query string, args ...driver.NamedValue) (Rows, error) {
+	result, err := t.db.executor.ExecuteWithParams(ctx, t.tx, query, args)
 	if err != nil {
 		return nil, err
 	}
 
 	return &rows{
-		result: result,
-		tx:     t.tx,
-		ctx:    ctx,
+		result:          result,
+		tx:              t.tx,
+		ctx:             ctx,
+		ownsTransaction: false, // Transaction query doesn't own the tx
 	}, nil
 }
 
@@ -392,14 +371,14 @@ type stmt struct {
 	tx    Tx
 }
 
-func (s *stmt) ExecContext(ctx context.Context, args ...interface{}) (sql.Result, error) {
+func (s *stmt) ExecContext(ctx context.Context, args ...driver.NamedValue) (sql.Result, error) {
 	if s.tx != nil {
 		return s.tx.ExecContext(ctx, s.query, args...)
 	}
 	return s.db.ExecContext(ctx, s.query, args...)
 }
 
-func (s *stmt) QueryContext(ctx context.Context, args ...interface{}) (Rows, error) {
+func (s *stmt) QueryContext(ctx context.Context, args ...driver.NamedValue) (Rows, error) {
 	if s.tx != nil {
 		return s.tx.QueryContext(ctx, s.query, args...)
 	}
@@ -411,44 +390,29 @@ func (s *stmt) Close() error {
 }
 
 // Query executes a query that returns rows
-func (db *DB) Query(ctx context.Context, query string, args ...interface{}) (Rows, error) {
+func (db *DB) Query(ctx context.Context, query string, args ...driver.NamedValue) (Rows, error) {
 	return db.QueryContext(ctx, query, args...)
 }
 
 // QueryContext executes a query that returns rows with context
-func (db *DB) QueryContext(ctx context.Context, query string, args ...interface{}) (Rows, error) {
-	// Convert args to driver.NamedValue
-	namedValues := make([]driver.NamedValue, len(args))
-	for i, arg := range args {
-		namedValues[i] = driver.NamedValue{
-			Ordinal: i + 1,
-			Value:   arg,
-		}
-	}
-
-	// Begin a read transaction
-	tx, err := db.engine.BeginTx(ctx, sql.LevelReadCommitted)
+func (db *DB) QueryContext(ctx context.Context, query string, args ...driver.NamedValue) (Rows, error) {
+	// Execute the query with nil transaction - ExecuteWithParams will handle it
+	result, err := db.executor.ExecuteWithParams(ctx, nil, query, args)
 	if err != nil {
-		return nil, err
-	}
-
-	// Execute the query
-	result, err := db.executor.ExecuteWithParams(ctx, tx, query, namedValues)
-	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
 	// Wrap the result in a Rows interface
 	return &rows{
-		result: result,
-		tx:     tx,
-		ctx:    ctx,
+		result:          result,
+		tx:              nil, // No transaction to manage
+		ctx:             ctx,
+		ownsTransaction: false, // No transaction ownership
 	}, nil
 }
 
 // QueryRow executes a query that is expected to return at most one row
-func (db *DB) QueryRow(ctx context.Context, query string, args ...interface{}) Row {
+func (db *DB) QueryRow(ctx context.Context, query string, args ...driver.NamedValue) Row {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return &row{err: err}
@@ -457,39 +421,26 @@ func (db *DB) QueryRow(ctx context.Context, query string, args ...interface{}) R
 }
 
 // ExecContext executes a query with context and parameters
-func (db *DB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	// Convert args to driver.NamedValue
-	namedValues := make([]driver.NamedValue, len(args))
-	for i, arg := range args {
-		namedValues[i] = driver.NamedValue{
-			Ordinal: i + 1,
-			Value:   arg,
-		}
-	}
-
-	// Execute the query with the provided context
-	tx, err := db.engine.BeginTx(ctx, sql.LevelReadCommitted)
+func (db *DB) ExecContext(ctx context.Context, query string, args ...driver.NamedValue) (sql.Result, error) {
+	// Execute the query with nil transaction - ExecuteWithParams will handle it
+	result, err := db.executor.ExecuteWithParams(ctx, nil, query, args)
 	if err != nil {
 		return nil, err
 	}
 
-	// Execute the query
-	result, err := db.executor.ExecuteWithParams(ctx, tx, query, namedValues)
-	if err != nil {
-		tx.Rollback()
-		return nil, err
+	// Check if we got a Result or not
+	if result != nil {
+		defer result.Close()
+
+		// Convert to sql.Result
+		return &execResult{
+			rowsAffected: result.RowsAffected(),
+			lastInsertID: result.LastInsertID(),
+		}, nil
 	}
 
-	// Commit the transaction
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-
-	// Convert to sql.Result
-	return &execResult{
-		rowsAffected: result.RowsAffected(),
-		lastInsertID: result.LastInsertID(),
-	}, nil
+	// No result, return empty result
+	return &execResult{}, nil
 }
 
 // Begin starts a new transaction

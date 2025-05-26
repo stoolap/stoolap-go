@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +59,9 @@ type MVCCEngine struct {
 
 	// Cleanup related fields
 	cleanupCancel func() // Function to stop the cleanup goroutine
+
+	// Commit synchronization for SNAPSHOT isolation
+	commitMu sync.Mutex
 }
 
 // NewMVCCEngine creates a new MVCC storage engine
@@ -93,7 +97,7 @@ func NewMVCCEngine(config *storage.Config) *MVCCEngine {
 	if err != nil {
 		if config.Path != "" && config.Persistence.Enabled {
 			// This is a critical error for file:// URLs where persistence is required
-			fmt.Printf("Error: Failed to initialize required persistence for path %s: %v\n", config.Path, err)
+			log.Printf("Error: Failed to initialize required persistence for path %s: %v\n", config.Path, err)
 			// Return the persistence manager anyway, but Open() will fail later
 		}
 	}
@@ -145,14 +149,14 @@ func (e *MVCCEngine) Open() error {
 		// Load actual data synchronously to ensure data is available immediately
 		err = e.persistence.LoadDiskStores()
 		if err != nil {
-			fmt.Printf("Warning: Error during data recovery: %v\n", err)
+			log.Printf("Warning: Error during data recovery: %v\n", err)
 			// Continue anyway - the database can still function with partial data
 		}
 
 		// Verify data loaded correctly
 		_, err = e.ListTables()
 		if err != nil {
-			fmt.Printf("Warning: Unable to list tables after data loading: %v\n", err)
+			log.Printf("Warning: Unable to list tables after data loading: %v\n", err)
 		}
 	}
 
@@ -190,7 +194,7 @@ func (e *MVCCEngine) Close() error {
 		go func() {
 			count := e.registry.WaitForActiveTransactions(2 * time.Second)
 			if count > 0 {
-				fmt.Printf("Warning: %d transactions did not complete before timeout\n", count)
+				log.Printf("Warning: %d transactions did not complete before timeout\n", count)
 				shutdownErrors = append(shutdownErrors,
 					fmt.Sprintf("%d transactions did not complete before timeout", count))
 			}
@@ -202,7 +206,7 @@ func (e *MVCCEngine) Close() error {
 		case <-txnDone:
 			// Normal completion
 		case <-engineShutdownTimeout:
-			fmt.Println("Warning: Engine shutdown timeout reached during transaction wait")
+			log.Println("Warning: Engine shutdown timeout reached during transaction wait")
 			shutdownErrors = append(shutdownErrors, "engine shutdown timeout reached during transaction wait")
 			// Continue with shutdown anyway
 		}
@@ -218,7 +222,7 @@ func (e *MVCCEngine) Close() error {
 			if persistenceErr != nil {
 				errMsg := fmt.Sprintf("error stopping persistence: %v", persistenceErr)
 				shutdownErrors = append(shutdownErrors, errMsg)
-				fmt.Printf("Warning: %s\n", errMsg)
+				log.Printf("Warning: %s\n", errMsg)
 			}
 			close(persistenceDone)
 		}()
@@ -229,11 +233,11 @@ func (e *MVCCEngine) Close() error {
 		case <-time.After(3 * time.Second):
 			errMsg := "persistence layer shutdown timed out"
 			shutdownErrors = append(shutdownErrors, errMsg)
-			fmt.Printf("Warning: %s, forcing cleanup\n", errMsg)
+			log.Printf("Warning: %s, forcing cleanup\n", errMsg)
 		case <-engineShutdownTimeout:
 			errMsg := "engine shutdown timeout reached during persistence shutdown"
 			shutdownErrors = append(shutdownErrors, errMsg)
-			fmt.Printf("Warning: %s\n", errMsg)
+			log.Printf("Warning: %s\n", errMsg)
 		}
 	}
 
@@ -250,11 +254,11 @@ func (e *MVCCEngine) Close() error {
 	case <-time.After(1 * time.Second):
 		errMsg := "resource cleanup timed out"
 		shutdownErrors = append(shutdownErrors, errMsg)
-		fmt.Printf("Warning: %s\n", errMsg)
+		log.Printf("Warning: %s\n", errMsg)
 	case <-engineShutdownTimeout:
 		errMsg := "engine shutdown timeout reached during resource cleanup"
 		shutdownErrors = append(shutdownErrors, errMsg)
-		fmt.Printf("Warning: %s\n", errMsg)
+		log.Printf("Warning: %s\n", errMsg)
 	}
 
 	// Release file lock if we have one
@@ -262,7 +266,7 @@ func (e *MVCCEngine) Close() error {
 		if err := e.fileLock.Release(); err != nil {
 			errMsg := fmt.Sprintf("error releasing file lock: %v", err)
 			shutdownErrors = append(shutdownErrors, errMsg)
-			fmt.Printf("Warning: %s\n", errMsg)
+			log.Printf("Warning: %s\n", errMsg)
 		}
 		e.fileLock = nil
 	}
@@ -304,14 +308,12 @@ func (e *MVCCEngine) BeginTx(ctx context.Context, level sql.IsolationLevel) (sto
 		return nil, errors.New("engine is not open")
 	}
 
-	originalIsolationLevel := e.GetIsolationLevel()
-	specificIsolationLevel := storage.ReadCommitted
-
+	// Map SQL isolation level to storage isolation level
+	var specificIsolationLevel storage.IsolationLevel
 	switch level {
 	case sql.LevelReadCommitted:
-		e.SetIsolationLevel(storage.ReadCommitted)
+		specificIsolationLevel = storage.ReadCommitted
 	case sql.LevelSnapshot, sql.LevelRepeatableRead:
-		e.SetIsolationLevel(storage.SnapshotIsolation)
 		specificIsolationLevel = storage.SnapshotIsolation
 	default:
 		return nil, fmt.Errorf("unsupported isolation level: %v", level)
@@ -338,7 +340,6 @@ func (e *MVCCEngine) BeginTx(ctx context.Context, level sql.IsolationLevel) (sto
 		active:    true,
 		ctx:       ctx,
 
-		originalIsolationLevel: originalIsolationLevel,
 		specificIsolationLevel: specificIsolationLevel,
 	}
 
@@ -458,7 +459,7 @@ func (e *MVCCEngine) CreateTable(schema storage.Schema) (storage.Schema, error) 
 		// Pass schema directly to avoid callback to engine.GetTableSchema
 		diskStore, err := NewDiskVersionStore(e.persistence.path, name, vs, schema)
 		if err != nil {
-			fmt.Printf("Warning: Failed to create disk store for table %s: %v\n", name, err)
+			log.Printf("Warning: Failed to create disk store for table %s: %v\n", name, err)
 		} else {
 			// Add the disk store to the persistence manager's map
 			e.persistence.mu.Lock()
@@ -473,12 +474,12 @@ func (e *MVCCEngine) CreateTable(schema storage.Schema) (storage.Schema, error) 
 		// Serialize the schema for WAL
 		schemaData, err := serializeSchema(&schema)
 		if err != nil {
-			fmt.Printf("Warning: Failed to serialize schema for WAL: %v\n", err)
+			log.Printf("Warning: Failed to serialize schema for WAL: %v\n", err)
 		} else {
 			// Record DDL operation in WAL
 			err = e.persistence.RecordDDLOperation(name, WALCreateTable, schemaData)
 			if err != nil {
-				fmt.Printf("Warning: Failed to record DDL operation in WAL: %v\n", err)
+				log.Printf("Warning: Failed to record DDL operation in WAL: %v\n", err)
 			}
 		}
 	}
@@ -685,7 +686,7 @@ func (e *MVCCEngine) StartPeriodicCleanup(interval, maxAge time.Duration) func()
 				evictedCount := 0
 
 				if rowCount > 0 || txnCount > 0 || evictedCount > 0 {
-					/* fmt.Printf("Cleanup: removed %d transactions, %d deleted rows older than %s, evicted %d cold rows\n",
+					/* log.Printf("Cleanup: removed %d transactions, %d deleted rows older than %s, evicted %d cold rows\n",
 					txnCount, rowCount, maxAge, evictedCount) */
 				}
 			case <-ctx.Done():
@@ -741,12 +742,12 @@ func (e *MVCCEngine) CreateColumn(tableName, columnName string, columnType stora
 		// Serialize the updated schema for WAL
 		schemaData, err := serializeSchema(&schema)
 		if err != nil {
-			fmt.Printf("Warning: Failed to serialize schema for WAL: %v\n", err)
+			log.Printf("Warning: Failed to serialize schema for WAL: %v\n", err)
 		} else {
 			// Record DDL operation in WAL
 			err = e.persistence.RecordDDLOperation(tableName, WALAlterTable, schemaData)
 			if err != nil {
-				fmt.Printf("Warning: Failed to record alter table operation in WAL: %v\n", err)
+				log.Printf("Warning: Failed to record alter table operation in WAL: %v\n", err)
 			}
 		}
 	}
@@ -805,12 +806,12 @@ func (e *MVCCEngine) DropColumn(tableName, columnName string) error {
 		// Serialize the updated schema for WAL
 		schemaData, err := serializeSchema(&schema)
 		if err != nil {
-			fmt.Printf("Warning: Failed to serialize schema for WAL: %v\n", err)
+			log.Printf("Warning: Failed to serialize schema for WAL: %v\n", err)
 		} else {
 			// Record DDL operation in WAL
 			err = e.persistence.RecordDDLOperation(tableName, WALAlterTable, schemaData)
 			if err != nil {
-				fmt.Printf("Warning: Failed to record alter table operation in WAL: %v\n", err)
+				log.Printf("Warning: Failed to record alter table operation in WAL: %v\n", err)
 			}
 		}
 	}
@@ -844,14 +845,14 @@ func (e *MVCCEngine) DropTable(name string) error {
 		if diskStore, exists := e.persistence.diskStores[name]; exists && diskStore != nil {
 			// Close the disk store before removing it from the map
 			if err := diskStore.Close(); err != nil {
-				fmt.Printf("Warning: Failed to close disk store for table %s: %v\n", name, err)
+				log.Printf("Warning: Failed to close disk store for table %s: %v\n", name, err)
 			}
 			delete(e.persistence.diskStores, name)
 
 			// Remove the table's directory with all snapshots
 			tableDir := filepath.Join(e.persistence.path, name)
 			if err := os.RemoveAll(tableDir); err != nil {
-				fmt.Printf("Warning: Failed to remove snapshot directory for table %s: %v\n", name, err)
+				log.Printf("Warning: Failed to remove snapshot directory for table %s: %v\n", name, err)
 			}
 
 		}
@@ -876,16 +877,16 @@ func (e *MVCCEngine) DropTable(name string) error {
 				// Delete the WAL directory
 				walDir := filepath.Join(e.persistence.path, "wal")
 				if err := os.RemoveAll(walDir); err != nil {
-					fmt.Printf("Warning: Failed to remove WAL directory after dropping last table: %v\n", err)
+					log.Printf("Warning: Failed to remove WAL directory after dropping last table: %v\n", err)
 				} else {
-					fmt.Printf("Removed WAL directory after dropping last table\n")
+					log.Printf("Removed WAL directory after dropping last table\n")
 				}
 
 				// Create a fresh WAL manager
 				walPath := filepath.Join(e.persistence.path, "wal")
 				newWal, err := NewWALManager(walPath, SyncMode(e.config.Persistence.SyncMode), &e.config.Persistence)
 				if err != nil {
-					fmt.Printf("Warning: Failed to create new WAL manager after dropping last table: %v\n", err)
+					log.Printf("Warning: Failed to create new WAL manager after dropping last table: %v\n", err)
 				} else {
 					e.persistence.wal = newWal
 				}
@@ -897,7 +898,7 @@ func (e *MVCCEngine) DropTable(name string) error {
 		// Record DDL operation in WAL with nil schema data since we're dropping the table
 		err := e.persistence.RecordDDLOperation(name, WALDropTable, nil)
 		if err != nil {
-			fmt.Printf("Warning: Failed to record drop table operation in WAL: %v\n", err)
+			log.Printf("Warning: Failed to record drop table operation in WAL: %v\n", err)
 		}
 	}
 

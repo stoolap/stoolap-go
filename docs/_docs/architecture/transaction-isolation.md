@@ -18,23 +18,27 @@ Stoolap currently supports two isolation levels:
 
 ## Setting Isolation Levels
 
-Stoolap supports setting isolation levels both at the session level and per-transaction:
+Stoolap provides multiple ways to control transaction isolation levels:
 
-### Session-wide Isolation Level
+### Connection-level Default Isolation Level
 
-Set the default isolation level for all transactions in the current session:
+Set the default isolation level for the current connection using `SET ISOLATIONLEVEL`:
 
 ```sql
--- Set session isolation level to READ COMMITTED (default)
+-- Set connection default to READ COMMITTED (default)
 SET ISOLATIONLEVEL = 'READ COMMITTED';
 
--- Set session isolation level to SNAPSHOT
+-- Set connection default to SNAPSHOT
 SET ISOLATIONLEVEL = 'SNAPSHOT';
 ```
 
+This setting affects:
+- **Auto-commit transactions** - Queries executed without an explicit transaction
+- **Transactions started with BEGIN** - When no isolation level is specified
+
 ### Transaction-specific Isolation Level
 
-Override the session isolation level for a specific transaction:
+Override the connection's default isolation level for a specific transaction:
 
 ```sql
 -- Start a transaction with READ COMMITTED isolation level
@@ -44,7 +48,21 @@ BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
 BEGIN TRANSACTION ISOLATION LEVEL SNAPSHOT;
 ```
 
-**Important**: When a transaction with a specific isolation level completes (via COMMIT or ROLLBACK), the isolation level automatically reverts to the original session-wide setting.
+### Programmatic Transaction Control
+
+When using the Stoolap driver programmatically:
+
+```go
+// Use connection default (affected by SET ISOLATIONLEVEL)
+tx, err := db.Begin()
+
+// Explicitly specify isolation level (ignores SET ISOLATIONLEVEL)
+tx, err := db.BeginTx(context.Background(), &sql.TxOptions{
+    Isolation: sql.LevelSnapshot,
+})
+```
+
+**Important**: Transaction-specific isolation levels always take precedence over the connection default set by `SET ISOLATIONLEVEL`.
 
 ## MVCC Implementation
 
@@ -148,12 +166,24 @@ Stoolap uses optimistic concurrency control:
 2. At commit time, the system checks for conflicts
 3. If a conflict is detected, the transaction is aborted
 
-### Conflict Detection
+### Write-Write Conflict Detection
 
-Conflicts are detected when two transactions attempt to modify the same row:
+For SNAPSHOT isolation, Stoolap implements write-write conflict detection to prevent lost updates:
 
-- **Primary Key Conflicts** - Occur when two transactions try to insert rows with the same primary key
-- **Unique Constraint Conflicts** - Occur when an insert or update violates a unique constraint
+- When a transaction begins, it records a begin timestamp
+- When rows are modified, write timestamps are tracked
+- At commit time, if any row being written has a write timestamp greater than the transaction's begin timestamp, a conflict is detected
+- The transaction is aborted with: `transaction aborted due to write-write conflict`
+
+This ensures that concurrent transactions cannot overwrite each other's changes without detection.
+
+### Types of Conflicts
+
+Conflicts are detected in the following scenarios:
+
+- **Write-Write Conflicts** (SNAPSHOT only) - When two transactions modify the same row
+- **Primary Key Conflicts** - When two transactions try to insert rows with the same primary key
+- **Unique Constraint Conflicts** - When an insert or update violates a unique constraint
 
 ## Implementation Details
 
@@ -221,9 +251,33 @@ UPDATE accounts SET balance = balance - 100 WHERE id = 1;
 ROLLBACK;
 ```
 
+### Write-Write Conflict Example
+
+```sql
+-- Connection 1
+SET ISOLATIONLEVEL = 'SNAPSHOT';
+BEGIN;
+SELECT balance FROM accounts WHERE id = 1; -- Returns 1000
+
+-- Connection 2
+SET ISOLATIONLEVEL = 'SNAPSHOT';
+BEGIN;
+SELECT balance FROM accounts WHERE id = 1; -- Returns 1000
+
+-- Connection 1
+UPDATE accounts SET balance = 900 WHERE id = 1;
+COMMIT; -- Success
+
+-- Connection 2
+UPDATE accounts SET balance = 800 WHERE id = 1;
+COMMIT; -- Fails with: transaction aborted due to write-write conflict
+```
+
+In this example, both transactions read the same initial value (1000) but Connection 2's commit fails because Connection 1 already modified the row after Connection 2's transaction began.
+
 ## Limitations
 
 - Long-running transactions can cause version storage to grow, impacting performance
-- Extremely high concurrency on the same rows may lead to frequent conflicts
+- Extremely high concurrency on the same rows may lead to frequent conflicts in SNAPSHOT isolation
 - Savepoints are not currently supported
-- The isolation level automatic restoration only works for properly completed transactions (COMMIT/ROLLBACK)
+- Each connection maintains its own default isolation level set by `SET ISOLATIONLEVEL`

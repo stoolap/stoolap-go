@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -51,7 +52,6 @@ type MVCCTransaction struct {
 	lastTable     storage.Table
 
 	specificIsolationLevel storage.IsolationLevel
-	originalIsolationLevel storage.IsolationLevel
 }
 
 // ID returns the transaction ID
@@ -67,10 +67,11 @@ func (t *MVCCTransaction) SetIsolationLevel(level storage.IsolationLevel) error 
 		return ErrTransactionClosed
 	}
 
-	t.originalIsolationLevel = t.engine.GetIsolationLevel()
+	// Only set the transaction-specific isolation level
+	// Don't modify the engine-level setting
 	t.specificIsolationLevel = level
 
-	return t.engine.SetIsolationLevel(level)
+	return nil
 }
 
 // SetContext sets the context for the transaction
@@ -105,26 +106,95 @@ func (t *MVCCTransaction) Commit() error {
 
 	defer t.cleanUp()
 
-	// Mark transaction as committed in registry
-	t.engine.registry.CommitTransaction(t.id)
-
 	// First check if this is a read-only transaction BEFORE committing tables
 	// since committing tables will clear their local versions
 	isReadOnly := true
 
-	// Check if any tables have modifications
-	for _, table := range t.tables {
+	// Collect all DML operations before committing tables
+	type dmlOp struct {
+		tableName string
+		rowID     int64
+		version   RowVersion
+	}
+	var dmlOperations []dmlOp
+
+	// Check if any tables have modifications and collect them
+	for tableName, table := range t.tables {
 		if table.txnVersions != nil && table.txnVersions.localVersions.Len() > 0 {
 			isReadOnly = false
-			break
+			// Collect all operations from this table
+			table.txnVersions.localVersions.ForEach(func(rowID int64, version RowVersion) bool {
+				dmlOperations = append(dmlOperations, dmlOp{
+					tableName: tableName,
+					rowID:     rowID,
+					version:   version,
+				})
+				return true
+			})
 		}
 	}
 
-	// Now commit all MVCC tables to merge their changes to the global version stores
-	for _, table := range t.tables {
-		if err := table.Commit(); err != nil {
-			return err
+	// Get the effective isolation level for this transaction
+	effectiveIsolationLevel := t.engine.GetIsolationLevel()
+	if t.specificIsolationLevel != 0 {
+		effectiveIsolationLevel = t.specificIsolationLevel
+	}
+
+	// For SNAPSHOT isolation, serialize commit operations to prevent race conditions
+	if effectiveIsolationLevel == storage.SnapshotIsolation && !isReadOnly {
+		// Get the transaction's begin timestamp
+		beginTime := t.engine.registry.GetTransactionBeginTime(t.id)
+		// Lock the engine's commit mutex to serialize SNAPSHOT commits
+		t.engine.commitMu.Lock()
+		defer t.engine.commitMu.Unlock()
+
+		// Check each table that has been modified
+		for tableName, table := range t.tables {
+			if table.txnVersions != nil && table.txnVersions.localVersions.Len() > 0 {
+				// Get the version store for conflict detection
+				versionStore := t.engine.versionStores[tableName]
+				if versionStore != nil {
+					// Collect all row IDs that were written by this transaction
+					var writtenRows []int64
+					table.txnVersions.localVersions.ForEach(func(rowID int64, version RowVersion) bool {
+						writtenRows = append(writtenRows, rowID)
+						return true
+					})
+
+					// Check for write-write conflicts
+					if versionStore.CheckWriteConflict(writtenRows, beginTime) {
+						// Conflict detected - abort the transaction
+						t.engine.registry.AbortTransaction(t.id)
+						return errors.New("transaction aborted due to write-write conflict")
+					}
+				}
+			}
 		}
+
+		// Commit all MVCC tables to merge their changes to the global version stores
+		for _, table := range t.tables {
+			if err := table.Commit(); err != nil {
+				// If commit fails, abort the transaction
+				t.engine.registry.AbortTransaction(t.id)
+				return err
+			}
+		}
+
+		// Only after data is written, mark transaction as committed in registry
+		t.engine.registry.CommitTransaction(t.id)
+	} else {
+		// For READ COMMITTED or read-only transactions, no serialization needed
+		// First commit all MVCC tables to merge their changes to the global version stores
+		for _, table := range t.tables {
+			if err := table.Commit(); err != nil {
+				// If commit fails, abort the transaction
+				t.engine.registry.AbortTransaction(t.id)
+				return err
+			}
+		}
+
+		// Only after data is written, mark transaction as committed in registry
+		t.engine.registry.CommitTransaction(t.id)
 	}
 
 	// Record in WAL if persistence is enabled AND transaction modified data
@@ -132,6 +202,14 @@ func (t *MVCCTransaction) Commit() error {
 		// Use the isReadOnly flag we computed BEFORE committing tables
 		// At this point, most table.txnVersions will be nil because Commit() cleared them
 		if !isReadOnly {
+			// First record all DML operations to WAL
+			for _, op := range dmlOperations {
+				err := t.engine.persistence.RecordDMLOperation(t.id, op.tableName, op.rowID, op.version)
+				if err != nil {
+					log.Printf("Warning: Failed to record DML operation in WAL: %v\n", err)
+				}
+			}
+
 			// Collect auto-increment values from tables that have been modified in this transaction
 			var autoIncrementInfo []struct {
 				TableName string
@@ -155,7 +233,7 @@ func (t *MVCCTransaction) Commit() error {
 			// Record commit with auto-increment information
 			err := t.engine.persistence.RecordCommit(t.id, autoIncrementInfo...)
 			if err != nil {
-				fmt.Printf("Warning: Failed to record commit in WAL: %v\n", err)
+				log.Printf("Warning: Failed to record commit in WAL: %v\n", err)
 			}
 		}
 	}
@@ -203,7 +281,7 @@ func (t *MVCCTransaction) Rollback() error {
 		if !isReadOnly {
 			err := t.engine.persistence.RecordRollback(t.id)
 			if err != nil {
-				fmt.Printf("Warning: Failed to record rollback in WAL: %v\n", err)
+				log.Printf("Warning: Failed to record rollback in WAL: %v\n", err)
 			}
 		}
 	}
@@ -235,11 +313,6 @@ func (t *MVCCTransaction) cleanUp() error {
 	t.tables = nil
 	clear(tablesMap)
 	tablesMapPool.Put(tablesMap)
-
-	if t.specificIsolationLevel != t.originalIsolationLevel {
-		// Reset the isolation level to the original one
-		t.engine.SetIsolationLevel(t.originalIsolationLevel)
-	}
 
 	return nil
 }

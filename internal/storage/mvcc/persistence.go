@@ -18,6 +18,7 @@ package mvcc
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -334,7 +335,7 @@ func (pm *PersistenceManager) runSnapshotTask() {
 				// Table was dropped but diskStore wasn't properly cleaned up
 				// Close and remove it from diskStores map
 				if err := diskStore.Close(); err != nil {
-					fmt.Printf("Warning: Failed to close stale disk store for table %s: %v\n", tableName, err)
+					log.Printf("Warning: Failed to close stale disk store for table %s: %v\n", tableName, err)
 				}
 				pm.mu.Lock()
 				delete(pm.diskStores, tableName)
@@ -343,15 +344,15 @@ func (pm *PersistenceManager) runSnapshotTask() {
 				// Remove the table's directory with all snapshots
 				tableDir := filepath.Join(pm.path, tableName)
 				if err := os.RemoveAll(tableDir); err != nil {
-					fmt.Printf("Warning: Failed to remove snapshot directory for stale table %s: %v\n", tableName, err)
+					log.Printf("Warning: Failed to remove snapshot directory for stale table %s: %v\n", tableName, err)
 				}
 
-				fmt.Printf("Warning: Found stale disk store for dropped table %s, removing it\n", tableName)
+				log.Printf("Warning: Found stale disk store for dropped table %s, removing it\n", tableName)
 				continue
 			}
 
 			if err := diskStore.CreateSnapshot(); err != nil {
-				fmt.Printf("Error: creating snapshot for table %s: %v\n", tableName, err)
+				log.Printf("Error: creating snapshot for table %s: %v\n", tableName, err)
 				continue
 			}
 
@@ -362,7 +363,7 @@ func (pm *PersistenceManager) runSnapshotTask() {
 			if pm.keepCount > 0 {
 				tableDir := filepath.Join(pm.path, tableName)
 				if err := pm.cleanupOldSnapshots(tableDir, pm.keepCount); err != nil {
-					fmt.Printf("Warning: Failed to clean up old snapshots for table %s: %v\n", tableName, err)
+					log.Printf("Warning: Failed to clean up old snapshots for table %s: %v\n", tableName, err)
 				}
 			}
 		}
@@ -411,7 +412,7 @@ func (pm *PersistenceManager) Stop() error {
 			go func(name string, s *DiskVersionStore) {
 				defer close(storeDone)
 				if err := s.Close(); err != nil {
-					fmt.Printf("Warning: Error closing disk store for %s: %v\n", name, err)
+					log.Printf("Warning: Error closing disk store for %s: %v\n", name, err)
 				}
 			}(tableName, store)
 
@@ -420,9 +421,9 @@ func (pm *PersistenceManager) Stop() error {
 			case <-storeDone:
 				// Store closed normally
 			case <-storeTimeout:
-				fmt.Printf("Warning: Disk store close for %s timed out\n", tableName)
+				log.Printf("Warning: Disk store close for %s timed out\n", tableName)
 			case <-ctx.Done():
-				fmt.Println("Warning: Overall shutdown timeout reached during disk store closing")
+				log.Println("Warning: Overall shutdown timeout reached during disk store closing")
 				return
 			}
 		}
@@ -463,7 +464,7 @@ func (pm *PersistenceManager) Stop() error {
 					if len(bufferData) > 0 && pm.wal.walFile != nil {
 						_, flushErr = pm.wal.walFile.Write(bufferData)
 						if flushErr != nil {
-							fmt.Printf("Error: flushing WAL buffer: %v\n", flushErr)
+							log.Printf("Error: flushing WAL buffer: %v\n", flushErr)
 						} else {
 							// Force sync with timeout
 							syncComplete := make(chan struct{})
@@ -476,17 +477,17 @@ func (pm *PersistenceManager) Stop() error {
 							case <-syncComplete:
 								// Sync completed normally
 							case <-time.After(500 * time.Millisecond):
-								fmt.Println("Warning: WAL sync during flush timed out")
+								log.Println("Warning: WAL sync during flush timed out")
 							case <-ctx.Done():
-								fmt.Println("warning: Overall shutdown timeout reached during WAL sync")
+								log.Println("warning: Overall shutdown timeout reached during WAL sync")
 								return
 							}
 						}
 					}
 				case <-time.After(500 * time.Millisecond):
-					fmt.Println("Warning: WAL lock acquisition during flush timed out")
+					log.Println("Warning: WAL lock acquisition during flush timed out")
 				case <-ctx.Done():
-					fmt.Println("Warning: Overall shutdown timeout reached during WAL lock acquisition")
+					log.Println("Warning: Overall shutdown timeout reached during WAL lock acquisition")
 					return
 				}
 			}()
@@ -495,9 +496,9 @@ func (pm *PersistenceManager) Stop() error {
 			select {
 			case <-flushComplete:
 			case <-time.After(1 * time.Second):
-				fmt.Println("Warning: WAL flush operation timed out")
+				log.Println("Warning: WAL flush operation timed out")
 			case <-ctx.Done():
-				fmt.Println("Warning: Overall shutdown timeout reached during WAL flush")
+				log.Println("Warning: Overall shutdown timeout reached during WAL flush")
 				return
 			}
 
@@ -513,14 +514,14 @@ func (pm *PersistenceManager) Stop() error {
 			case err := <-walCloseDone:
 				if err != nil {
 					shutdownErr = fmt.Errorf("error closing WAL: %w", err)
-					fmt.Printf("Error: closing WAL: %v\n", err)
+					log.Printf("Error: closing WAL: %v\n", err)
 				}
 			case <-time.After(1 * time.Second):
 				shutdownErr = fmt.Errorf("WAL manager close operation timed out")
-				fmt.Println("Warning: WAL manager close operation timed out")
+				log.Println("Warning: WAL manager close operation timed out")
 			case <-ctx.Done():
 				shutdownErr = fmt.Errorf("overall shutdown timeout reached during WAL close")
-				fmt.Println("Warning: Overall shutdown timeout reached during WAL close")
+				log.Println("Warning: Overall shutdown timeout reached during WAL close")
 				return
 			}
 		}
@@ -531,7 +532,7 @@ func (pm *PersistenceManager) Stop() error {
 	case <-done:
 	case <-time.After(4 * time.Second):
 		shutdownErr = fmt.Errorf("persistence manager shutdown timed out")
-		fmt.Println("Warning: Persistence manager shutdown timed out, forcing exit")
+		log.Println("Warning: Persistence manager shutdown timed out, forcing exit")
 	}
 
 	// Clean up any other resources regardless of timeout
@@ -582,7 +583,7 @@ func (pm *PersistenceManager) LoadDiskStores() error {
 	// 1. Try to load latest snapshots for all tables
 	tables, err := pm.loadSnapshots()
 	if err != nil {
-		fmt.Printf("Warning: Error loading snapshots: %v. Falling back to WAL-only recovery.\n", err)
+		log.Printf("Warning: Error loading snapshots: %v. Falling back to WAL-only recovery.\n", err)
 		// Create an empty tables map since we're doing WAL-only recovery
 		tables = make(map[string]*storage.Schema)
 
@@ -641,7 +642,7 @@ func (pm *PersistenceManager) LoadDiskStores() error {
 		return nil
 	})
 	if err != nil {
-		fmt.Printf("Warning: Error during WAL replay: %v\n", err)
+		log.Printf("Warning: Error during WAL replay: %v\n", err)
 		return fmt.Errorf("failed to replay WAL: %w", err)
 	}
 
@@ -662,14 +663,14 @@ func (pm *PersistenceManager) LoadDiskStores() error {
 			// Delete the WAL directory
 			walDir := filepath.Join(pm.path, "wal")
 			if err := os.RemoveAll(walDir); err != nil {
-				fmt.Printf("Warning: Failed to remove WAL directory after dropping all tables: %v\n", err)
+				log.Printf("Warning: Failed to remove WAL directory after dropping all tables: %v\n", err)
 			}
 
 			// Create a fresh WAL manager
 			walPath := filepath.Join(pm.path, "wal")
 			newWal, err := NewWALManager(walPath, SyncMode(pm.engine.config.Persistence.SyncMode), &pm.engine.config.Persistence)
 			if err != nil {
-				fmt.Printf("Warning: Failed to create new WAL manager after dropping all tables: %v\n", err)
+				log.Printf("Warning: Failed to create new WAL manager after dropping all tables: %v\n", err)
 			} else {
 				pm.wal = newWal
 			}
@@ -785,7 +786,7 @@ func (pm *PersistenceManager) loadSnapshots() (map[string]*storage.Schema, error
 		binPath := filepath.Join(pm.path, tableName, latestSnapshot)
 		reader, err := NewDiskReader(binPath)
 		if err != nil {
-			fmt.Printf("Warning: Failed to create disk reader for snapshot %s: %v\n", binPath, err)
+			log.Printf("Warning: Failed to create disk reader for snapshot %s: %v\n", binPath, err)
 			continue
 		}
 
@@ -794,7 +795,7 @@ func (pm *PersistenceManager) loadSnapshots() (map[string]*storage.Schema, error
 		reader.Close()
 
 		if schema == nil {
-			fmt.Printf("Warning: Failed to get schema from snapshot for table %s\n", tableName)
+			log.Printf("Warning: Failed to get schema from snapshot for table %s\n", tableName)
 			continue
 		}
 
@@ -816,13 +817,13 @@ func (pm *PersistenceManager) loadSnapshots() (map[string]*storage.Schema, error
 		// Create disk version store
 		diskStore, err := NewDiskVersionStore(pm.path, tableName, vs, *schema)
 		if err != nil {
-			fmt.Printf("Warning: Failed to create disk store for table %s: %v\n", tableName, err)
+			log.Printf("Warning: Failed to create disk store for table %s: %v\n", tableName, err)
 			continue
 		}
 
 		// Load snapshots
 		if err := diskStore.LoadSnapshots(); err != nil {
-			fmt.Printf("Warning: Failed to load snapshots for table %s: %v\n", tableName, err)
+			log.Printf("Warning: Failed to load snapshots for table %s: %v\n", tableName, err)
 			continue
 		}
 
@@ -849,13 +850,13 @@ func (pm *PersistenceManager) loadSnapshots() (map[string]*storage.Schema, error
 		// Create a new disk version store
 		diskStore, err := NewDiskVersionStore(pm.path, tableName, vs)
 		if err != nil {
-			fmt.Printf("Warning: Failed to create disk store for table %s: %v\n", tableName, err)
+			log.Printf("Warning: Failed to create disk store for table %s: %v\n", tableName, err)
 			continue
 		}
 
 		// Load snapshots for this table (may be empty)
 		if err := diskStore.LoadSnapshots(); err != nil {
-			fmt.Printf("Warning: Failed to load snapshots for table %s: %v\n", tableName, err)
+			log.Printf("Warning: Failed to load snapshots for table %s: %v\n", tableName, err)
 			continue
 		}
 
@@ -867,7 +868,7 @@ func (pm *PersistenceManager) loadSnapshots() (map[string]*storage.Schema, error
 		// Get and store the schema
 		schema, err := vs.GetTableSchema()
 		if err != nil {
-			fmt.Printf("Warning: Failed to get schema for table %s: %v\n", tableName, err)
+			log.Printf("Warning: Failed to get schema for table %s: %v\n", tableName, err)
 			continue
 		}
 
@@ -895,13 +896,13 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 				for i := uint32(0); i < count; i++ {
 					tableName, err := reader.ReadString()
 					if err != nil {
-						fmt.Printf("Warning: Error reading table name from commit record: %v\n", err)
+						log.Printf("Warning: Error reading table name from commit record: %v\n", err)
 						continue
 					}
 
 					value, err := reader.ReadInt64()
 					if err != nil {
-						fmt.Printf("Warning: Error reading auto-increment value from commit record: %v\n", err)
+						log.Printf("Warning: Error reading auto-increment value from commit record: %v\n", err)
 						continue
 					}
 
@@ -957,11 +958,11 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 			if !exists && pm.enabled {
 				diskStore, err := NewDiskVersionStore(pm.path, entry.TableName, vs)
 				if err != nil {
-					fmt.Printf("Warning: Failed to create disk store for table %s: %v\n", entry.TableName, err)
+					log.Printf("Warning: Failed to create disk store for table %s: %v\n", entry.TableName, err)
 				} else {
 					// Load any existing snapshots (will be empty if none exist)
 					if err := diskStore.LoadSnapshots(); err != nil {
-						fmt.Printf("Warning: Failed to load snapshots for table %s: %v\n", entry.TableName, err)
+						log.Printf("Warning: Failed to load snapshots for table %s: %v\n", entry.TableName, err)
 					}
 					// Add the disk store to the persistence manager's map
 					pm.mu.Lock()
@@ -1018,7 +1019,7 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 			// Remove the index
 			err := vs.RemoveIndex(indexName)
 			if err != nil {
-				fmt.Printf("Warning: WAL replay - failed to remove index '%s': %v\n", indexName, err)
+				log.Printf("Warning: WAL replay - failed to remove index '%s': %v\n", indexName, err)
 				// Continue despite the error since this is just a warning
 			}
 
@@ -1037,7 +1038,7 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 		if exists && diskStore != nil {
 			// Close the disk store before removing it from the map
 			if err := diskStore.Close(); err != nil {
-				fmt.Printf("Warning: Failed to close disk store for table %s: %v\n", entry.TableName, err)
+				log.Printf("Warning: Failed to close disk store for table %s: %v\n", entry.TableName, err)
 			}
 			delete(pm.diskStores, entry.TableName)
 		}
@@ -1046,7 +1047,7 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 		// Remove the table's directory with all snapshots
 		tableDir := filepath.Join(pm.path, entry.TableName)
 		if err := os.RemoveAll(tableDir); err != nil {
-			fmt.Printf("Warning: Failed to remove snapshot directory for table %s: %v\n", entry.TableName, err)
+			log.Printf("Warning: Failed to remove snapshot directory for table %s: %v\n", entry.TableName, err)
 		}
 
 		// Drop from engine
@@ -1282,7 +1283,7 @@ func (pm *PersistenceManager) RecordCommit(txnID int64, autoIncrementInfo ...str
 
 	// Check if WAL manager is running before taking the lock
 	if !pm.wal.running.Load() {
-		fmt.Printf("Warning: Attempted to commit transaction %d after WAL manager shutdown\n", txnID)
+		log.Printf("Warning: Attempted to commit transaction %d after WAL manager shutdown\n", txnID)
 		return fmt.Errorf("WAL manager is not running")
 	}
 
@@ -1291,7 +1292,7 @@ func (pm *PersistenceManager) RecordCommit(txnID int64, autoIncrementInfo ...str
 
 	// Check again after acquiring the lock
 	if !pm.wal.running.Load() {
-		fmt.Printf("Warning: WAL manager shut down while waiting for lock (commit txnID=%d)\n", txnID)
+		log.Printf("Warning: WAL manager shut down while waiting for lock (commit txnID=%d)\n", txnID)
 		return fmt.Errorf("WAL manager is not running")
 	}
 
@@ -1328,7 +1329,7 @@ func (pm *PersistenceManager) RecordCommit(txnID int64, autoIncrementInfo ...str
 	// AppendEntryLocked now handles all buffer management based on operation type and sync mode
 	lsn, err := pm.wal.AppendEntryLocked(entry)
 	if err != nil {
-		fmt.Printf("Error: Failed to append WAL entry: %v\n", err)
+		log.Printf("Error: Failed to append WAL entry: %v\n", err)
 		return err
 	}
 
@@ -1379,7 +1380,7 @@ func (pm *PersistenceManager) RecordRollback(txnID int64) error {
 
 	// Check if WAL manager is running before taking the lock
 	if !pm.wal.running.Load() {
-		fmt.Printf("Warning: Attempted to rollback transaction %d after WAL manager shutdown\n", txnID)
+		log.Printf("Warning: Attempted to rollback transaction %d after WAL manager shutdown\n", txnID)
 		return fmt.Errorf("WAL manager is not running")
 	}
 
@@ -1388,7 +1389,7 @@ func (pm *PersistenceManager) RecordRollback(txnID int64) error {
 
 	// Check again after acquiring the lock
 	if !pm.wal.running.Load() {
-		fmt.Printf("Warning: WAL manager shut down while waiting for lock (rollback txnID=%d)\n", txnID)
+		log.Printf("Warning: WAL manager shut down while waiting for lock (rollback txnID=%d)\n", txnID)
 		return fmt.Errorf("WAL manager is not running")
 	}
 
@@ -1402,7 +1403,7 @@ func (pm *PersistenceManager) RecordRollback(txnID int64) error {
 	// AppendEntryLocked now handles all buffer management based on operation type and sync mode
 	lsn, err := pm.wal.AppendEntryLocked(entry)
 	if err != nil {
-		fmt.Printf("Error: Failed to append WAL entry: %v\n", err)
+		log.Printf("Error: Failed to append WAL entry: %v\n", err)
 		return err
 	}
 

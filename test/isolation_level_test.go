@@ -16,6 +16,7 @@ limitations under the License.
 package test
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -237,4 +238,183 @@ func TestIsolationLevelReset(t *testing.T) {
 	tx2.Rollback()
 
 	t.Log("Isolation level reset test completed successfully")
+}
+
+// TestConnectionIsolation tests that SET ISOLATIONLEVEL only affects the current connection
+func TestConnectionIsolation(t *testing.T) {
+	// Note: In the current implementation, memory:// creates a shared database,
+	// so both connections will share the same underlying database instance.
+	// This test demonstrates that each connection maintains its own isolation level setting.
+	db1, err := sql.Open("stoolap", "memory://isolation_test")
+	if err != nil {
+		t.Fatalf("Failed to open db1: %v", err)
+	}
+	defer db1.Close()
+
+	db2, err := sql.Open("stoolap", "memory://isolation_test")
+	if err != nil {
+		t.Fatalf("Failed to open db2: %v", err)
+	}
+	defer db2.Close()
+
+	// Create table using first connection
+	_, err = db1.Exec("DROP TABLE IF EXISTS conn_test")
+	if err != nil {
+		t.Fatalf("Failed to drop table: %v", err)
+	}
+
+	_, err = db1.Exec("CREATE TABLE conn_test (id INT PRIMARY KEY, value INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = db1.Exec("INSERT INTO conn_test VALUES (1, 100)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Set SNAPSHOT isolation on db1 only
+	_, err = db1.Exec("SET ISOLATIONLEVEL = 'SNAPSHOT'")
+	if err != nil {
+		t.Fatalf("Failed to set isolation level on db1: %v", err)
+	}
+
+	// db2 should remain at READ COMMITTED (default)
+	t.Log("db1 set to SNAPSHOT isolation, db2 remains at default READ COMMITTED")
+
+	// Start concurrent transactions
+	tx1, err := db1.Begin()
+	if err != nil {
+		t.Fatalf("Failed to begin tx1: %v", err)
+	}
+	defer tx1.Rollback()
+
+	tx2, err := db2.Begin()
+	if err != nil {
+		t.Fatalf("Failed to begin tx2: %v", err)
+	}
+	defer tx2.Rollback()
+
+	// Both read the initial value
+	var value1, value2 int
+	err = tx1.QueryRow("SELECT value FROM conn_test WHERE id = 1").Scan(&value1)
+	if err != nil {
+		t.Fatalf("tx1 failed to read: %v", err)
+	}
+
+	err = tx2.QueryRow("SELECT value FROM conn_test WHERE id = 1").Scan(&value2)
+	if err != nil {
+		t.Fatalf("tx2 failed to read: %v", err)
+	}
+
+	// Update in tx2 (READ COMMITTED by default) and commit
+	_, err = tx2.Exec("UPDATE conn_test SET value = 200 WHERE id = 1")
+	if err != nil {
+		t.Fatalf("tx2 failed to update: %v", err)
+	}
+
+	err = tx2.Commit()
+	if err != nil {
+		t.Fatalf("tx2 failed to commit: %v", err)
+	}
+
+	// Try to update in tx1 (SNAPSHOT isolation)
+	_, err = tx1.Exec("UPDATE conn_test SET value = 300 WHERE id = 1")
+	if err != nil {
+		t.Fatalf("tx1 failed to update: %v", err)
+	}
+
+	// tx1 commit should fail with write-write conflict (SNAPSHOT)
+	err = tx1.Commit()
+	if err == nil {
+		// Check final value to understand what happened
+		var finalValue int
+		err2 := db1.QueryRow("SELECT value FROM conn_test WHERE id = 1").Scan(&finalValue)
+		if err2 != nil {
+			t.Errorf("Failed to get final value: %v", err2)
+		} else {
+			t.Errorf("Expected write-write conflict for SNAPSHOT isolation, but commit succeeded. Final value: %d", finalValue)
+		}
+	} else if err.Error() != "transaction aborted due to write-write conflict" {
+		t.Errorf("Expected write-write conflict error, got: %v", err)
+	}
+}
+
+// TestTransactionLevelOverride tests transaction-level isolation override with BeginTx
+func TestTransactionLevelOverride(t *testing.T) {
+	db, err := sql.Open("stoolap", "memory://")
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create table
+	_, err = db.Exec("CREATE TABLE override_test (id INT PRIMARY KEY, value INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+	_, err = db.Exec("INSERT INTO override_test VALUES (1, 100)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Ensure connection default is READ COMMITTED
+	_, err = db.Exec("SET ISOLATIONLEVEL = 'READ COMMITTED'")
+	if err != nil {
+		t.Fatalf("Failed to set isolation level: %v", err)
+	}
+
+	// Start two transactions with explicit SNAPSHOT isolation
+	tx1, err := db.BeginTx(context.Background(), &sql.TxOptions{
+		Isolation: sql.LevelSnapshot,
+	})
+	if err != nil {
+		t.Fatalf("Failed to begin tx1: %v", err)
+	}
+	defer tx1.Rollback()
+
+	tx2, err := db.BeginTx(context.Background(), &sql.TxOptions{
+		Isolation: sql.LevelSnapshot,
+	})
+	if err != nil {
+		t.Fatalf("Failed to begin tx2: %v", err)
+	}
+	defer tx2.Rollback()
+
+	// Both read
+	var value1, value2 int
+	err = tx1.QueryRow("SELECT value FROM override_test WHERE id = 1").Scan(&value1)
+	if err != nil {
+		t.Fatalf("tx1 failed to read: %v", err)
+	}
+
+	err = tx2.QueryRow("SELECT value FROM override_test WHERE id = 1").Scan(&value2)
+	if err != nil {
+		t.Fatalf("tx2 failed to read: %v", err)
+	}
+
+	// Update and commit tx1
+	_, err = tx1.Exec("UPDATE override_test SET value = 200 WHERE id = 1")
+	if err != nil {
+		t.Fatalf("tx1 failed to update: %v", err)
+	}
+
+	err = tx1.Commit()
+	if err != nil {
+		t.Fatalf("tx1 failed to commit: %v", err)
+	}
+
+	// Try to update in tx2
+	_, err = tx2.Exec("UPDATE override_test SET value = 300 WHERE id = 1")
+	if err != nil {
+		t.Fatalf("tx2 failed to update: %v", err)
+	}
+
+	// Should fail with write-write conflict due to SNAPSHOT isolation
+	err = tx2.Commit()
+	if err == nil {
+		t.Error("Expected write-write conflict, but commit succeeded")
+	} else if err.Error() != "transaction aborted due to write-write conflict" {
+		t.Errorf("Expected write-write conflict error, got: %v", err)
+	}
 }

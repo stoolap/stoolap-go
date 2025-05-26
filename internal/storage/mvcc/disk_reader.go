@@ -18,6 +18,7 @@ package mvcc
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 
@@ -420,7 +421,7 @@ func (r *DiskReader) ForEach(callback func(rowID int64, version RowVersion) bool
 
 	// Optional debug info if needed
 	if errors > 0 {
-		fmt.Printf("Error: DiskReader processed %d rows, encountered %d errors\n",
+		log.Printf("Error: DiskReader processed %d rows, encountered %d errors\n",
 			processed, errors)
 	}
 }
