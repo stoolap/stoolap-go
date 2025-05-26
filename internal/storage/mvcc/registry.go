@@ -16,7 +16,6 @@ limitations under the License.
 package mvcc
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -35,11 +34,9 @@ type TransactionRegistry struct {
 	nextTxnID             atomic.Int64
 	activeTransactions    *fastmap.SegmentInt64Map[int64] // txnID -> begin sequence number
 	committedTransactions *fastmap.SegmentInt64Map[int64] // txnID -> commit sequence number
-	isolationLevel        storage.IsolationLevel
+	isolationLevel        atomic.Int64
 	accepting             atomic.Bool  // Flag to control if new transactions are accepted
 	nextSequence          atomic.Int64 // Single monotonic sequence for both begin and commit
-
-	mu sync.RWMutex // RWMutex for additional safety in some operations
 }
 
 // NewTransactionRegistry creates a new transaction registry
@@ -47,26 +44,20 @@ func NewTransactionRegistry() *TransactionRegistry {
 	reg := &TransactionRegistry{
 		activeTransactions:    fastmap.NewSegmentInt64Map[int64](8, 1000),
 		committedTransactions: fastmap.NewSegmentInt64Map[int64](8, 1000),
-		isolationLevel:        storage.ReadCommitted, // Default isolation level
 	}
-	reg.accepting.Store(true) // Start accepting transactions by default
+	reg.isolationLevel.Store(int64(storage.ReadCommitted)) // Default isolation level
+	reg.accepting.Store(true)                              // Start accepting transactions by default
 	return reg
 }
 
 // SetIsolationLevel sets the isolation level for this registry
 func (r *TransactionRegistry) SetIsolationLevel(level storage.IsolationLevel) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.isolationLevel = level
+	r.isolationLevel.Store(int64(level))
 }
 
 // GetIsolationLevel returns the current isolation level
 func (r *TransactionRegistry) GetIsolationLevel() storage.IsolationLevel {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	return r.isolationLevel
+	return storage.IsolationLevel(r.isolationLevel.Load())
 }
 
 // BeginTransaction starts a new transaction
@@ -177,13 +168,7 @@ func (r *TransactionRegistry) IsDirectlyVisible(versionTxnID int64) bool {
 		return true
 	}
 
-	// Fast path for ReadCommitted isolation level (the default)
-	// where any committed transaction is visible to all other transactions
-	r.mu.RLock()
-	isolationLevel := r.isolationLevel
-	r.mu.RUnlock()
-
-	if isolationLevel == storage.ReadCommitted {
+	if r.GetIsolationLevel() == storage.ReadCommitted {
 		// Thread-safe check with SegmentInt64Map
 		// This is a hot path that benefits from being as fast as possible
 		return r.committedTransactions.Has(versionTxnID)
@@ -208,12 +193,7 @@ func (r *TransactionRegistry) IsVisible(versionTxnID int64, viewerTxnID int64) b
 		return true
 	}
 
-	// Fast path for common READ COMMITTED level (most databases default to this)
-	r.mu.RLock()
-	isolationLevel := r.isolationLevel
-	r.mu.RUnlock()
-
-	if isolationLevel == storage.ReadCommitted {
+	if r.GetIsolationLevel() == storage.ReadCommitted {
 		// In READ COMMITTED, only committed transactions are visible
 		// This delegation is inlinable and very efficient
 		return r.IsDirectlyVisible(versionTxnID)
@@ -256,11 +236,7 @@ func (r *TransactionRegistry) IsVisible(versionTxnID int64, viewerTxnID int64) b
 func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 	// In READ COMMITTED mode, we cannot clean up committed transactions
 	// because IsDirectlyVisible checks if the transaction exists in committedTransactions
-	r.mu.RLock()
-	isolationLevel := r.isolationLevel
-	r.mu.RUnlock()
-
-	if isolationLevel == storage.ReadCommitted {
+	if r.GetIsolationLevel() == storage.ReadCommitted {
 		return 0
 	}
 
@@ -273,17 +249,16 @@ func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 
 	// If we're in snapshot isolation mode, we need to preserve transactions
 	// that might still be visible to active transactions
-	if isolationLevel == storage.SnapshotIsolation {
-		activeSet = make(map[int64]struct{})
-
+	if r.GetIsolationLevel() == storage.SnapshotIsolation {
 		// Collect all active transaction IDs into our map
 		// This is done in a separate loop to avoid nested locks
-		txnIDs := make([]int64, 0, 100)
+		txnIDs := make([]int64, 0, r.activeTransactions.Len())
 		r.activeTransactions.ForEach(func(txnID, beginTS int64) bool {
 			txnIDs = append(txnIDs, txnID)
 			return true
 		})
 
+		activeSet = make(map[int64]struct{}, len(txnIDs))
 		// Now populate our set without holding any locks
 		for _, txnID := range txnIDs {
 			activeSet[txnID] = struct{}{}
@@ -305,7 +280,7 @@ func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 		}
 
 		// Skip transactions that are still active
-		if isolationLevel == storage.SnapshotIsolation {
+		if r.GetIsolationLevel() == storage.SnapshotIsolation {
 			if _, isActive := activeSet[txnID]; isActive {
 				return true
 			}
@@ -329,39 +304,23 @@ func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 
 // WaitForActiveTransactions waits for all active transactions to complete with timeout
 // Returns the number of transactions that were still active after timeout
-func (r *TransactionRegistry) WaitForActiveTransactions(timeout time.Duration) int {
-	deadline := time.Now().Add(timeout)
+func (r *TransactionRegistry) WaitForActiveTransactions(timeout time.Duration) int64 {
+	timeoutCh := time.After(timeout)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
 
 	for {
-		// Check if we've reached the timeout
-		if time.Now().After(deadline) {
-			break
+		select {
+		case <-timeoutCh:
+			// timeout reached, return remaining active transactions count
+			return r.activeTransactions.Len()
+		case <-ticker.C:
+			// on each tick, check if any are still active transactions
+			if r.activeTransactions.Len() == 0 {
+				return 0
+			}
 		}
-
-		// Count active transactions - SegmentInt64Map is already thread-safe
-		activeCount := 0
-		r.activeTransactions.ForEach(func(txnID, beginTS int64) bool {
-			activeCount++
-			return true
-		})
-
-		// If no active transactions, we're done
-		if activeCount == 0 {
-			return 0
-		}
-
-		// Wait a short time before checking again
-		time.Sleep(10 * time.Millisecond)
 	}
-
-	// Return the number of transactions still active after timeout
-	activeCount := 0
-	r.activeTransactions.ForEach(func(txnID, beginTS int64) bool {
-		activeCount++
-		return true
-	})
-
-	return activeCount
 }
 
 // StopAcceptingTransactions stops the registry from accepting new transactions
