@@ -260,7 +260,7 @@ func (t *MVCCTransaction) Commit() error {
 			for _, op := range dmlOperations {
 				err := t.engine.persistence.RecordDMLOperation(t.id, op.tableName, op.rowID, op.version)
 				if err != nil {
-					log.Printf("Warning: Failed to record DML operation in WAL: %v\n", err)
+					log.Printf("Warning: Failed to record DML operation in WAL: %v", err)
 				}
 			}
 
