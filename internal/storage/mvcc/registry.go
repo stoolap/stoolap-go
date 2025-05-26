@@ -89,7 +89,7 @@ func (r *TransactionRegistry) BeginTransaction() (txnID int64, beginTS int64) {
 }
 
 // CommitTransaction commits a transaction
-func (r *TransactionRegistry) CommitTransaction(txnID int64) (commitTS int64) {
+func (r *TransactionRegistry) CommitTransaction(txnID int64) int64 {
 	// Use monotonic sequence instead of wall-clock time
 	// This ensures consistent ordering even with clock skew or low timer resolution
 	commitSeq := r.nextSequence.Add(1)
@@ -101,7 +101,7 @@ func (r *TransactionRegistry) CommitTransaction(txnID int64) (commitTS int64) {
 	// Then add to committed transactions (storing the commit sequence)
 	r.committedTransactions.Set(txnID, commitSeq)
 
-	return commitTS
+	return commitSeq
 }
 
 // RecoverCommittedTransaction recreates a committed transaction during recovery
