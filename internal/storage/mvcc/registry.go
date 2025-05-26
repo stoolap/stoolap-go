@@ -33,10 +33,11 @@ const (
 // Lock-free implementation using our optimized SegmentInt64Map for optimal performance and concurrency
 type TransactionRegistry struct {
 	nextTxnID             atomic.Int64
-	activeTransactions    *fastmap.SegmentInt64Map[int64] // txnID -> begin timestamp
-	committedTransactions *fastmap.SegmentInt64Map[int64] // txnID -> commit timestamp
+	activeTransactions    *fastmap.SegmentInt64Map[int64] // txnID -> begin sequence number
+	committedTransactions *fastmap.SegmentInt64Map[int64] // txnID -> commit sequence number
 	isolationLevel        storage.IsolationLevel
-	accepting             atomic.Bool // Flag to control if new transactions are accepted
+	accepting             atomic.Bool  // Flag to control if new transactions are accepted
+	nextSequence          atomic.Int64 // Single monotonic sequence for both begin and commit
 
 	mu sync.RWMutex // RWMutex for additional safety in some operations
 }
@@ -78,24 +79,27 @@ func (r *TransactionRegistry) BeginTransaction() (txnID int64, beginTS int64) {
 
 	// Generate a new transaction ID atomically
 	txnID = r.nextTxnID.Add(1)
-	beginTS = time.Now().UnixNano()
+	// Use monotonic sequence instead of wall-clock time
+	beginSeq := r.nextSequence.Add(1)
 
 	// Record the transaction (thread-safe with SegmentInt64Map)
-	r.activeTransactions.Set(txnID, beginTS)
+	r.activeTransactions.Set(txnID, beginSeq)
 
-	return txnID, beginTS
+	return txnID, beginSeq
 }
 
 // CommitTransaction commits a transaction
 func (r *TransactionRegistry) CommitTransaction(txnID int64) (commitTS int64) {
-	commitTS = time.Now().UnixNano()
+	// Use monotonic sequence instead of wall-clock time
+	// This ensures consistent ordering even with clock skew or low timer resolution
+	commitSeq := r.nextSequence.Add(1)
 
 	// First remove from active transactions to avoid deadlock
 	// when a cleanup operation is running concurrently
 	r.activeTransactions.Del(txnID)
 
-	// Then add to committed transactions
-	r.committedTransactions.Set(txnID, commitTS)
+	// Then add to committed transactions (storing the commit sequence)
+	r.committedTransactions.Set(txnID, commitSeq)
 
 	return commitTS
 }
@@ -153,11 +157,11 @@ func (r *TransactionRegistry) GetCommitTimestamp(txnID int64) (int64, bool) {
 }
 
 // GetTransactionBeginTime gets the begin timestamp for a transaction
-func (r *TransactionRegistry) GetTransactionBeginTime(txnID int64) int64 {
+func (r *TransactionRegistry) GetTransactionBeginSeq(txnID int64) int64 {
 	// Thread-safe get with SegmentInt64Map
-	beginTS, exists := r.activeTransactions.Get(txnID)
+	beginSeq, exists := r.activeTransactions.Get(txnID)
 	if exists {
-		return beginTS
+		return beginSeq
 	}
 	// If not active, return 0 (transaction may have already committed/aborted)
 	return 0

@@ -143,7 +143,7 @@ func (t *MVCCTransaction) Commit() error {
 	// For SNAPSHOT isolation, serialize commit operations to prevent race conditions
 	if effectiveIsolationLevel == storage.SnapshotIsolation && !isReadOnly {
 		// Get the transaction's begin timestamp
-		beginTime := t.engine.registry.GetTransactionBeginTime(t.id)
+		beginSeq := t.engine.registry.GetTransactionBeginSeq(t.id)
 		// Lock the engine's commit mutex to serialize SNAPSHOT commits
 		t.engine.commitMu.Lock()
 		defer t.engine.commitMu.Unlock()
@@ -162,7 +162,7 @@ func (t *MVCCTransaction) Commit() error {
 					})
 
 					// Check for write-write conflicts
-					if versionStore.CheckWriteConflict(writtenRows, beginTime) {
+					if versionStore.CheckWriteConflict(writtenRows, beginSeq) {
 						// Conflict detected - abort the transaction
 						t.engine.registry.AbortTransaction(t.id)
 						return errors.New("transaction aborted due to write-write conflict")

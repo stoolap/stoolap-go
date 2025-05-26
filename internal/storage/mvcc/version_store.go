@@ -61,8 +61,8 @@ type VersionStore struct {
 	accessTimes *fastmap.SegmentInt64Map[int64] // Maps rowID -> last access timestamp
 
 	// Write-write conflict detection for SNAPSHOT isolation
-	// Maps rowID -> commit timestamp of last committed write
-	writeTimestamps *fastmap.SegmentInt64Map[int64]
+	// Maps rowID -> commit sequence when this row was last written
+	writeCommitSeqs *fastmap.SegmentInt64Map[int64]
 }
 
 // NewVersionStore creates a new version store
@@ -73,7 +73,7 @@ func NewVersionStore(tableName string, engine *MVCCEngine) *VersionStore {
 		indexes:         make(map[string]storage.Index),
 		engine:          engine,
 		accessTimes:     fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize access times tracking
-		writeTimestamps: fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize write timestamps for conflict detection
+		writeCommitSeqs: fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize write commit sequences for conflict detection
 	}
 	// Initialize atomic.Bool to false (not closed)
 	vs.closed.Store(false)
@@ -153,9 +153,7 @@ func (vs *VersionStore) AddVersion(rowID int64, version RowVersion) {
 		// Track write timestamp for conflict detection
 		// For SNAPSHOT isolation, we track the transaction ID that wrote this row
 		if vs.engine != nil && vs.engine.registry != nil {
-			// Use the current time when the write is being committed
-			currentTime := GetFastTimestamp()
-			vs.writeTimestamps.Set(rowID, currentTime)
+			vs.writeCommitSeqs.Set(rowID, vs.engine.registry.nextSequence.Add(1))
 		}
 
 		// Update columnar indexes with the new version
@@ -185,12 +183,10 @@ func (vs *VersionStore) AddVersion(rowID int64, version RowVersion) {
 		// Atomically replace the old version with the new one
 		vs.versions.Set(rowID, newVersion)
 
-		// Track write timestamp for conflict detection
+		// Conflict detection
 		// For SNAPSHOT isolation, we track the transaction ID that wrote this row
 		if vs.engine != nil && vs.engine.registry != nil {
-			// Use the current time when the write is being committed
-			currentTime := GetFastTimestamp()
-			vs.writeTimestamps.Set(rowID, currentTime)
+			vs.writeCommitSeqs.Set(rowID, vs.engine.registry.nextSequence.Add(1))
 		}
 
 		// Update columnar indexes
@@ -1445,11 +1441,11 @@ func (vs *VersionStore) RemoveIndex(indexName string) error {
 
 // CheckWriteConflict checks if any of the given rows have been modified after the transaction's begin timestamp
 // This is used for write-write conflict detection in SNAPSHOT isolation
-func (vs *VersionStore) CheckWriteConflict(rowIDs []int64, txnBeginTime int64) bool {
-	// For SNAPSHOT isolation, check if any rows were written after this transaction began
+func (vs *VersionStore) CheckWriteConflict(rowIDs []int64, txnBeginSeq int64) bool {
+	// For SNAPSHOT isolation, check if any rows were written by other transactions
 	for _, rowID := range rowIDs {
-		if lastWriteTime, exists := vs.writeTimestamps.Get(rowID); exists {
-			if lastWriteTime > txnBeginTime {
+		if lastWriteSeq, exists := vs.writeCommitSeqs.Get(rowID); exists {
+			if lastWriteSeq > txnBeginSeq {
 				// This row was written after our transaction began - conflict!
 				return true
 			}
