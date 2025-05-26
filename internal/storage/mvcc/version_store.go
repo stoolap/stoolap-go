@@ -150,11 +150,7 @@ func (vs *VersionStore) AddVersion(rowID int64, version RowVersion) {
 		}
 		vs.versions.Set(rowID, newVersion)
 
-		// Track write timestamp for conflict detection
-		// For SNAPSHOT isolation, we track the transaction ID that wrote this row
-		if vs.engine != nil && vs.engine.registry != nil {
-			vs.writeCommitSeqs.Set(rowID, vs.engine.registry.nextSequence.Add(1))
-		}
+		// Write sequence will be set during transaction commit
 
 		// Update columnar indexes with the new version
 		vs.UpdateColumnarIndexes(rowID, version)
@@ -183,11 +179,7 @@ func (vs *VersionStore) AddVersion(rowID int64, version RowVersion) {
 		// Atomically replace the old version with the new one
 		vs.versions.Set(rowID, newVersion)
 
-		// Conflict detection
-		// For SNAPSHOT isolation, we track the transaction ID that wrote this row
-		if vs.engine != nil && vs.engine.registry != nil {
-			vs.writeCommitSeqs.Set(rowID, vs.engine.registry.nextSequence.Add(1))
-		}
+		// Write sequence will be set during transaction commit
 
 		// Update columnar indexes
 		// First check if there are any indexes to update
@@ -1437,6 +1429,14 @@ func (vs *VersionStore) RemoveIndex(indexName string) error {
 	}
 
 	return fmt.Errorf("index %s not found", indexName)
+}
+
+// SetWriteSequences sets the commit sequence for multiple rows atomically
+// This is called during transaction commit under the commit mutex
+func (vs *VersionStore) SetWriteSequences(rowIDs []int64, commitSeq int64) {
+	for _, rowID := range rowIDs {
+		vs.writeCommitSeqs.Set(rowID, commitSeq)
+	}
 }
 
 // CheckWriteConflict checks if any of the given rows have been modified after the transaction's begin timestamp

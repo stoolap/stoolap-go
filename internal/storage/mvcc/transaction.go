@@ -148,6 +148,9 @@ func (t *MVCCTransaction) Commit() error {
 		t.engine.commitMu.Lock()
 		defer t.engine.commitMu.Unlock()
 
+		// Collect all written rows for conflict detection and sequence assignment
+		writtenRowsByTable := make(map[string][]int64)
+
 		// Check each table that has been modified
 		for tableName, table := range t.tables {
 			if table.txnVersions != nil && table.txnVersions.localVersions.Len() > 0 {
@@ -161,6 +164,9 @@ func (t *MVCCTransaction) Commit() error {
 						return true
 					})
 
+					// Save for later sequence assignment (after table.Commit clears txnVersions)
+					writtenRowsByTable[tableName] = writtenRows
+
 					// Check for write-write conflicts
 					if versionStore.CheckWriteConflict(writtenRows, beginSeq) {
 						// Conflict detected - abort the transaction
@@ -171,6 +177,10 @@ func (t *MVCCTransaction) Commit() error {
 			}
 		}
 
+		// Generate a single commit sequence for all writes in this transaction
+		// This must happen BEFORE committing tables to avoid races
+		commitSeq := t.engine.registry.nextSequence.Add(1)
+
 		// Commit all MVCC tables to merge their changes to the global version stores
 		for _, table := range t.tables {
 			if err := table.Commit(); err != nil {
@@ -180,16 +190,60 @@ func (t *MVCCTransaction) Commit() error {
 			}
 		}
 
+		// Set write sequences for all written rows atomically
+		// This must happen AFTER data is written but BEFORE releasing the commit mutex
+		for tableName, writtenRows := range writtenRowsByTable {
+			if versionStore := t.engine.versionStores[tableName]; versionStore != nil {
+				versionStore.SetWriteSequences(writtenRows, commitSeq)
+			}
+		}
+
 		// Only after data is written, mark transaction as committed in registry
 		t.engine.registry.CommitTransaction(t.id)
 	} else {
 		// For READ COMMITTED or read-only transactions, no serialization needed
+		// But we still need to track write sequences for conflict detection by SNAPSHOT transactions
+
+		// Collect written rows if not read-only
+		var writtenRowsByTable map[string][]int64
+		if !isReadOnly {
+			writtenRowsByTable = make(map[string][]int64)
+			for tableName, table := range t.tables {
+				if table.txnVersions != nil && table.txnVersions.localVersions.Len() > 0 {
+					versionStore := t.engine.versionStores[tableName]
+					if versionStore != nil {
+						var writtenRows []int64
+						table.txnVersions.localVersions.ForEach(func(rowID int64, version RowVersion) bool {
+							writtenRows = append(writtenRows, rowID)
+							return true
+						})
+						writtenRowsByTable[tableName] = writtenRows
+					}
+				}
+			}
+		}
+
+		// Generate commit sequence if we have writes
+		var commitSeq int64
+		if !isReadOnly {
+			commitSeq = t.engine.registry.nextSequence.Add(1)
+		}
+
 		// First commit all MVCC tables to merge their changes to the global version stores
 		for _, table := range t.tables {
 			if err := table.Commit(); err != nil {
 				// If commit fails, abort the transaction
 				t.engine.registry.AbortTransaction(t.id)
 				return err
+			}
+		}
+
+		// Set write sequences for conflict detection by other transactions
+		if !isReadOnly {
+			for tableName, writtenRows := range writtenRowsByTable {
+				if versionStore := t.engine.versionStores[tableName]; versionStore != nil {
+					versionStore.SetWriteSequences(writtenRows, commitSeq)
+				}
 			}
 		}
 
