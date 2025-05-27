@@ -95,35 +95,22 @@ func (f *SumFunction) Accumulate(value interface{}, distinct bool) {
 		intValue = int64(v)
 		numericValue = float64(v)
 		isInteger = true
-	default:
-		// Handle storage engine types with AsXXX methods
-		if iVal, ok := value.(interface{ AsInt64() (int64, bool) }); ok {
-			if i64, ok := iVal.AsInt64(); ok {
-				intValue = i64
-				numericValue = float64(i64)
-				isInteger = true
-				err = nil
-			} else {
-				err = fmt.Errorf("AsInt64 method failed")
-			}
-		} else if fVal, ok := value.(interface{ AsFloat64() (float64, bool) }); ok {
-			if f64, ok := fVal.AsFloat64(); ok {
-				numericValue = f64
-				isInteger = false
-				err = nil
-			} else {
-				err = fmt.Errorf("AsFloat64 method failed")
-			}
+	case Int64Convertible:
+		if i64, ok := v.AsInt64(); ok {
+			intValue = i64
+			numericValue = float64(i64)
+			isInteger = true
+			err = nil
 		} else {
-			// Fall back to reflection for other types
-			numericValue, err = toFloat64(value)
-			// Check if this is actually an integer value
-			if err == nil && numericValue == float64(int64(numericValue)) {
-				intValue = int64(numericValue)
-				isInteger = true
-			} else {
-				isInteger = false
-			}
+			err = fmt.Errorf("AsInt64 method failed")
+		}
+	case Float64Convertible:
+		if f64, ok := v.AsFloat64(); ok {
+			numericValue = f64
+			isInteger = false
+			err = nil
+		} else {
+			err = fmt.Errorf("AsFloat64 method failed")
 		}
 	}
 
@@ -205,36 +192,4 @@ func init() {
 	if registry := registry.GetGlobal(); registry != nil {
 		registry.RegisterAggregateFunction(NewSumFunction())
 	}
-}
-
-// toFloat64 converts a value to float64
-func toFloat64(value interface{}) (float64, error) {
-	// Handle common types directly without reflection first
-	switch v := value.(type) {
-	case int:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	case float64:
-		return v, nil
-	case float32:
-		return float64(v), nil
-	}
-
-	// Try using type assertions for common v3 storage engine interfaces
-	// AsFloat64 method is commonly used
-	if floatVal, ok := value.(interface{ AsFloat64() (float64, bool) }); ok {
-		if f64, ok := floatVal.AsFloat64(); ok {
-			return f64, nil
-		}
-	}
-
-	// AsInt64 method is commonly used for integer values
-	if intVal, ok := value.(interface{ AsInt64() (int64, bool) }); ok {
-		if i64, ok := intVal.AsInt64(); ok {
-			return float64(i64), nil
-		}
-	}
-
-	return 0, fmt.Errorf("unsupported type: %T", value)
 }

@@ -1,16 +1,18 @@
-/* Copyright 2025 Stoolap Contributors
+/*
+Copyright 2025 Stoolap Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
-limitations under the License. */
+limitations under the License.
+*/
 
 package aggregate
 
@@ -130,7 +132,11 @@ func isLessThan(a, b interface{}) bool {
 
 	// Convert to comparable numeric values with precision safety
 	if result, ok := compareNumerics(a, b); ok {
-		return result
+		if result < 0 {
+			return true // a < b
+		} else if result > 0 {
+			return false // a > b
+		}
 	}
 
 	// Handle non-numeric types
@@ -153,70 +159,134 @@ func isLessThan(a, b interface{}) bool {
 }
 
 // compareNumerics compares two numeric values with proper precision handling
-func compareNumerics(a, b interface{}) int {
+func compareNumerics(a, b interface{}) (int, bool) {
 	switch any(a).(type) {
-	case int, int8, int16, int32, int64:
+	case int, int8, int16, int32, int64, Int64Convertible:
 		switch any(b).(type) {
-		case int, int8, int16, int32, int64:
-			return compareSigned(toInt64(a), toInt64(b))
+		case int, int8, int16, int32, int64, Int64Convertible:
+			if a, ok1 := toInt64(a); ok1 {
+				if b, ok2 := toInt64(b); ok2 {
+					return compareSigned(a, b), true
+				}
+			}
 		case uint, uint8, uint16, uint32, uint64:
-			return compareSignedUnsigned(toInt64(a), toUint64(b))
-		case float32, float64:
-			return compareFloat(float64(toInt64(a)), toFloat64(b))
+			if a, ok1 := toInt64(a); ok1 {
+				if b, ok2 := toUint64(b); ok2 {
+					return compareSignedUnsigned(a, b), true
+				}
+			}
+		case float32, float64, Float64Convertible:
+			if a, ok1 := toInt64(a); ok1 {
+				if b, ok2 := toFloat64(b); ok2 {
+					return compareFloat(float64(a), b), true
+				}
+			}
 		}
 	case uint, uint8, uint16, uint32, uint64:
 		switch any(b).(type) {
-		case int, int8, int16, int32, int64:
-			return compareSignedUnsigned(toInt64(b), toUint64(a))
+		case int, int8, int16, int32, int64, Int64Convertible:
+			if a, ok1 := toUint64(a); ok1 {
+				if b, ok2 := toInt64(b); ok2 {
+					switch compareSignedUnsigned(b, a) {
+					case -1:
+						return 1, true // a > b
+					case 0:
+						return 0, true // a == b
+					case 1:
+						return -1, true // a < b
+					}
+				}
+			}
 		case uint, uint8, uint16, uint32, uint64:
-			return compareUnsigned(toUint64(a), toUint64(b))
-		case float32, float64:
-			return compareFloat(float64(toUint64(a)), toFloat64(b))
+			if a, ok1 := toUint64(a); ok1 {
+				if b, ok2 := toUint64(b); ok2 {
+					return compareUnsigned(a, b), true
+				}
+			}
+		case float32, float64, Float64Convertible:
+			if a, ok1 := toUint64(a); ok1 {
+				if b, ok2 := toFloat64(b); ok2 {
+					return compareFloat(float64(a), b), true
+				}
+			}
 		}
-	case float32, float64:
+	case float32, float64, Float64Convertible:
 		switch any(b).(type) {
-		case int, int8, int16, int32, int64:
-			return compareFloat(toFloat64(a), float64(toInt64(b)))
+		case int, int8, int16, int32, int64, Int64Convertible:
+			if a, ok1 := toFloat64(a); ok1 {
+				if b, ok2 := toInt64(b); ok2 {
+					return compareFloat(a, float64(b)), true
+				}
+			}
 		case uint, uint8, uint16, uint32, uint64:
-			return compareFloat(toFloat64(a), float64(toUint64(b)))
-		case float32, float64:
-			return compareFloat(toFloat64(a), toFloat64(b))
+			if a, ok1 := toFloat64(a); ok1 {
+				if b, ok2 := toUint64(b); ok2 {
+					return compareFloat(a, float64(b)), true
+				}
+			}
+		case float32, float64, Float64Convertible:
+			if a, ok1 := toFloat64(a); ok1 {
+				if b, ok2 := toFloat64(b); ok2 {
+					return compareFloat(a, b), true
+				}
+			}
 		}
 	}
 
-	panic("incompatible types for comparison: " + typeNameOf(a) + " and " + typeNameOf(b))
+	return 0, false
 }
 
-func toInt64(v interface{}) int64 {
+func toInt64(v interface{}) (int64, bool) {
 	switch x := any(v).(type) {
 	case int:
-		return int64(x)
+		return int64(x), true
 	case int8:
-		return int64(x)
+		return int64(x), true
 	case int16:
-		return int64(x)
+		return int64(x), true
 	case int32:
-		return int64(x)
+		return int64(x), true
 	case int64:
-		return x
+		return x, true
+	case Int64Convertible:
+		if i64, ok := x.AsInt64(); ok {
+			return i64, true
+		}
 	}
-	panic("not an int type")
+	return 0, false
 }
 
-func toUint64(v interface{}) uint64 {
+func toUint64(v interface{}) (uint64, bool) {
 	switch x := any(v).(type) {
 	case uint:
-		return uint64(x)
+		return uint64(x), true
 	case uint8:
-		return uint64(x)
+		return uint64(x), true
 	case uint16:
-		return uint64(x)
+		return uint64(x), true
 	case uint32:
-		return uint64(x)
+		return uint64(x), true
 	case uint64:
-		return x
+		return x, true
 	}
-	panic("not a uint type")
+	return 0, false
+}
+
+// toFloat64 converts a value to float64
+func toFloat64(value interface{}) (float64, bool) {
+	// Handle common types directly without reflection first
+	switch v := value.(type) {
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	case Float64Convertible:
+		if f64, ok := v.AsFloat64(); ok {
+			return f64, true
+		}
+	}
+
+	return 0, false
 }
 
 func compareSigned(a, b int64) int {
@@ -237,13 +307,10 @@ func compareUnsigned(a, b uint64) int {
 	return 0
 }
 
-// compareSignedUnsigned compares a signed int64 and an unsigned uint64
 func compareSignedUnsigned(a int64, b uint64) int {
 	if a < 0 {
-		// Negative int64 is always less than any uint64 (>=0)
 		return -1
 	}
-	// a is non-negative, safe to cast to uint64
 	ua := uint64(a)
 	if ua < b {
 		return -1
@@ -262,7 +329,6 @@ func compareFloat(a, b float64) int {
 	return 0
 }
 
-// isBasicType checks if a type is a basic Go type
 func isBasicType(v interface{}) bool {
 	switch v.(type) {
 	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:

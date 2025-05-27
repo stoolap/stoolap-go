@@ -134,42 +134,12 @@ func isEqual(a, b interface{}) bool {
 	case bool:
 		bBool, ok := b.(bool)
 		return ok && a.(bool) == bBool
-	case int:
-		bInt, ok := b.(int)
-		return ok && a.(int) == bInt
-	case int8:
-		bInt, ok := b.(int8)
-		return ok && a.(int8) == bInt
-	case int16:
-		bInt, ok := b.(int16)
-		return ok && a.(int16) == bInt
-	case int32:
-		bInt, ok := b.(int32)
-		return ok && a.(int32) == bInt
-	case int64:
-		bInt, ok := b.(int64)
-		return ok && a.(int64) == bInt
-	case uint:
-		bUint, ok := b.(uint)
-		return ok && a.(uint) == bUint
-	case uint8:
-		bUint, ok := b.(uint8)
-		return ok && a.(uint8) == bUint
-	case uint16:
-		bUint, ok := b.(uint16)
-		return ok && a.(uint16) == bUint
-	case uint32:
-		bUint, ok := b.(uint32)
-		return ok && a.(uint32) == bUint
-	case uint64:
-		bUint, ok := b.(uint64)
-		return ok && a.(uint64) == bUint
-	case float32:
-		bFloat, ok := b.(float32)
-		return ok && a.(float32) == bFloat
-	case float64:
-		bFloat, ok := b.(float64)
-		return ok && a.(float64) == bFloat
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, Int64Convertible, Float64Convertible:
+		switch b.(type) {
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, Int64Convertible, Float64Convertible:
+			cmpResult, ok := compareNumerics(a, b)
+			return ok && cmpResult == 0
+		}
 	case string:
 		bStr, ok := b.(string)
 		return ok && a.(string) == bStr
