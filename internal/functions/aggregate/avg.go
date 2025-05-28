@@ -94,18 +94,14 @@ func (f *AvgFunction) Accumulate(value any, distinct bool) {
 		if f.values == nil {
 			f.values = make(map[float64]struct{})
 		}
-
-		// Only add values we haven't seen before
-		if _, exists := f.values[numericValue]; !exists {
-			f.values[numericValue] = struct{}{}
-			f.sum += numericValue
-			f.count++
+		if _, exists := f.values[numericValue]; exists {
+			return // Already seen, skip
 		}
-	} else {
-		// Regular AVG
-		f.sum += numericValue
-		f.count++
+		f.values[numericValue] = struct{}{}
 	}
+
+	f.sum += numericValue
+	f.count++
 }
 
 // Result returns the final result of the AVG calculation

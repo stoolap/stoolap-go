@@ -25,7 +25,7 @@ import (
 
 // MaxFunction implements the MAX aggregate function
 type MaxFunction struct {
-	maxValue interface{}
+	maxValue any
 	dataType funcregistry.DataType
 	distinct bool // DISTINCT doesn't change MAX behavior, but we track it for consistency
 }
@@ -58,7 +58,7 @@ func (f *MaxFunction) Register(registry funcregistry.Registry) {
 }
 
 // Accumulate adds a value to the MAX calculation
-func (f *MaxFunction) Accumulate(value interface{}, distinct bool) {
+func (f *MaxFunction) Accumulate(value any, distinct bool) {
 	f.distinct = distinct
 
 	// Handle NULL values (MAX ignores NULLs)
@@ -80,7 +80,7 @@ func (f *MaxFunction) Accumulate(value interface{}, distinct bool) {
 }
 
 // Result returns the final result of the MAX calculation
-func (f *MaxFunction) Result() interface{} {
+func (f *MaxFunction) Result() any {
 	return f.maxValue // Returns NULL if no values were accumulated
 }
 
