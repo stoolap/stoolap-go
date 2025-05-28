@@ -369,6 +369,8 @@ func (t *MVCCTransaction) cleanUp() error {
 	clear(tablesMap)
 	tablesMapPool.Put(tablesMap)
 
+	t.engine.registry.RemoveTransactionIsolationLevel(t.id)
+
 	return nil
 }
 

@@ -256,7 +256,7 @@ func (s *RangeScanner) Next() bool {
 		}
 
 		// Check if the current ID exists and is visible
-		if version, exists := s.currentBatch.Get(s.currentID); exists && !version.IsDeleted {
+		if version, exists := s.currentBatch.Get(s.currentID); exists {
 			s.currentRow = version.Data
 			s.currentID++ // Advance ID for next iteration
 			return true

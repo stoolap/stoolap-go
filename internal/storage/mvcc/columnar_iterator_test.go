@@ -235,10 +235,10 @@ func newTestVersionStore(engine *MVCCEngine, tableName string, rowCount int) *Ve
 		}
 
 		rv := RowVersion{
-			TxnID:     100,
-			IsDeleted: false,
-			Data:      rowData,
-			RowID:     i,
+			TxnID:          100,
+			DeletedAtTxnID: 0,
+			Data:           rowData,
+			RowID:          i,
 		}
 
 		store.AddVersion(i, rv)

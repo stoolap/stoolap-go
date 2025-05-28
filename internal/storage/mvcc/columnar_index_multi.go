@@ -1459,7 +1459,7 @@ func (idx *MultiColumnarIndex) Build() error {
 
 		// Process each visible row
 		visibleVersions.ForEach(func(rowID int64, version *RowVersion) bool {
-			if version.IsDeleted {
+			if version.IsDeleted() {
 				return true
 			}
 

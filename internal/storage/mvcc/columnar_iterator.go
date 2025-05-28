@@ -127,7 +127,7 @@ func (it *ColumnarIndexIterator) Next() bool {
 
 		// Extract non-deleted rows
 		versions.ForEach(func(rowID int64, version *RowVersion) bool {
-			if !version.IsDeleted {
+			if !version.IsDeleted() {
 				it.prefetchMap.Put(rowID, version.Data)
 				foundAny = true
 			}

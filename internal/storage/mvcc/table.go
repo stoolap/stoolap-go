@@ -261,7 +261,7 @@ func (mt *MVCCTable) CheckUniqueConstraints(row storage.Row, originalRow ...stor
 		// For multi-column indexes, we need to check both global and local versions
 		// First check local transaction versions
 		for localRow := range mt.txnVersions.localVersions.Values() {
-			if localRow.IsDeleted || localRow.Data == nil {
+			if localRow.IsDeleted() || localRow.Data == nil {
 				continue // Skip deleted rows
 			}
 
@@ -691,7 +691,7 @@ func (mt *MVCCTable) Update(where storage.Expression, setter func(storage.Row) (
 				var err error
 				// Process global rows that weren't in local cache
 				globalRows.ForEach(func(rowID int64, version *RowVersion) bool {
-					if _, isLocal := localRows[rowID]; !isLocal && !version.IsDeleted {
+					if _, isLocal := localRows[rowID]; !isLocal && !version.IsDeleted() {
 						// Apply the setter function
 						updatedRow, uniqueCheck := setter(version.Data)
 
@@ -746,7 +746,7 @@ func (mt *MVCCTable) Update(where storage.Expression, setter func(storage.Row) (
 				var err error
 				// Process each visible row in this batch
 				versions.ForEach(func(rowID int64, version *RowVersion) bool {
-					if !version.IsDeleted {
+					if !version.IsDeleted() {
 						// Apply the setter function
 						updatedRow, uniqueCheck := setter(version.Data)
 
@@ -836,7 +836,7 @@ func (mt *MVCCTable) Update(where storage.Expression, setter func(storage.Row) (
 			}
 
 			// Skip if already marked as deleted locally
-			if localVersion, exists := mt.txnVersions.localVersions.Get(rowID); exists && localVersion.IsDeleted {
+			if localVersion, exists := mt.txnVersions.localVersions.Get(rowID); exists && localVersion.IsDeleted() {
 				return true
 			}
 
@@ -1028,10 +1028,8 @@ func (mt *MVCCTable) processGlobalVersions(
 			return true
 		}
 
-		// Skip deleted rows
-		if version.IsDeleted {
-			return true
-		}
+		// GetAllVisibleVersions already handles deletion visibility
+		// Don't skip deleted rows here
 
 		// Add to batch for processing
 		batchRows = append(batchRows, version.Data)
@@ -1145,7 +1143,7 @@ func (mt *MVCCTable) Delete(where storage.Expression) (int, error) {
 				defer ReturnVisibleVersionMap(globalRows)
 
 				globalRows.ForEach(func(rowID int64, version *RowVersion) bool {
-					if !version.IsDeleted {
+					if !version.IsDeleted() {
 						// Mark as deleted
 						mt.txnVersions.Put(rowID, version.Data, true)
 						deleteCount++
@@ -1201,7 +1199,7 @@ func (mt *MVCCTable) Delete(where storage.Expression) (int, error) {
 				globalRows := mt.versionStore.GetVisibleVersionsByIDs(batchIDs, mt.txnID)
 
 				globalRows.ForEach(func(rowID int64, version *RowVersion) bool {
-					if !version.IsDeleted {
+					if !version.IsDeleted() {
 						// Mark as deleted
 						mt.txnVersions.Put(rowID, version.Data, true)
 						deleteCount++
@@ -1268,7 +1266,7 @@ func (mt *MVCCTable) Delete(where storage.Expression) (int, error) {
 			}
 
 			// Skip if already marked as deleted locally
-			if localVersion, exists := mt.txnVersions.localVersions.Get(rowID); exists && localVersion.IsDeleted {
+			if localVersion, exists := mt.txnVersions.localVersions.Get(rowID); exists && localVersion.IsDeleted() {
 				return true
 			}
 
@@ -1451,14 +1449,22 @@ func (mt *MVCCTable) Scan(columnIndices []int, where storage.Expression) (storag
 		// For equality operator, we can do direct row lookup (fastest path)
 		if pkInfo.Operator == storage.EQ && pkInfo.ID != 0 {
 			// Direct lookup by ID
+			// First check transaction's local versions
 			row, exists := mt.txnVersions.Get(pkInfo.ID)
+			if exists {
+				// Found in local versions
+				return newSingleRowScanner(row, schema, columnIndices), nil
+			}
+			
+			// Not in local versions, check global version store
+			version, exists := mt.versionStore.GetVisibleVersion(pkInfo.ID, mt.txnID)
 			if !exists {
 				// Row doesn't exist or isn't visible to this transaction
 				return newEmptyScanner(), nil
 			}
 
-			// Return a scanner with just this single row
-			return newSingleRowScanner(row, schema, columnIndices), nil
+			// Return a scanner with just this single row from global store
+			return newSingleRowScanner(version.Data, schema, columnIndices), nil
 		}
 
 		if pkInfo.Expr != nil {
@@ -1850,17 +1856,17 @@ func (mt *MVCCTable) RowCount() int {
 	// We don't need the full data, just how many rows are visible
 	visibleVersions := mt.versionStore.GetAllVisibleVersions(mt.txnID)
 	visibleVersions.ForEach(func(rowID int64, version *RowVersion) bool {
-		if !version.IsDeleted {
-			processedKeys.Put(rowID, struct{}{})
-			rowCount++
-		}
+		// GetAllVisibleVersions already handles deletion visibility correctly
+		// If a row is in visibleVersions, it should be counted
+		processedKeys.Put(rowID, struct{}{})
+		rowCount++
 		return true
 	})
 	ReturnVisibleVersionMap(visibleVersions)
 
 	// Apply local changes that might override global versions
 	mt.txnVersions.localVersions.ForEach(func(rowID int64, version RowVersion) bool {
-		if version.IsDeleted {
+		if version.IsDeleted() {
 			// If deleted locally, remove from count
 			if processedKeys.Has(rowID) {
 				processedKeys.Del(rowID)
@@ -2528,17 +2534,16 @@ func (mt *MVCCTable) GetRowsWithFilter(expr storage.Expression) *fastmap.Int64Ma
 
 			// Process the visible versions
 			versions.ForEach(func(rowID int64, version *RowVersion) bool {
-				if !version.IsDeleted {
-					result.Put(rowID, version.Data)
-				}
-
+				// GetVisibleVersionsByIDs already handles deletion visibility
+				result.Put(rowID, version.Data)
 				return true
 			})
 		} else {
 			// For smaller sets, get rows individually
 			for _, rowID := range matchingRowIDs {
 				version, exists := mt.versionStore.GetVisibleVersion(rowID, mt.txnID)
-				if exists && !version.IsDeleted {
+				if exists {
+					// GetVisibleVersion already handles deletion visibility
 					result.Put(rowID, version.Data)
 				}
 			}

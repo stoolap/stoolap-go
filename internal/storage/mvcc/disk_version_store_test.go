@@ -84,11 +84,11 @@ func TestDiskVersionStore(t *testing.T) {
 
 		// Add to version store
 		vs.AddVersion(row.id, RowVersion{
-			TxnID:      4, // Use positive transaction ID
-			IsDeleted:  false,
-			Data:       data,
-			RowID:      row.id,
-			CreateTime: GetFastTimestamp(),
+			TxnID:          4, // Use positive transaction ID
+			DeletedAtTxnID: 0,
+			Data:           data,
+			RowID:          row.id,
+			CreateTime:     GetFastTimestamp(),
 		})
 	}
 
@@ -203,7 +203,7 @@ func TestDiskVersionStore(t *testing.T) {
 				t.Errorf("Expected RowID %d, got %d", row.id, version.RowID)
 			}
 
-			if version.IsDeleted {
+			if version.IsDeleted() {
 				t.Errorf("Expected row %d to not be deleted", row.id)
 			}
 
@@ -318,11 +318,11 @@ func TestDiskVersionStore(t *testing.T) {
 	t.Run("DeletedRows", func(t *testing.T) {
 		// Delete a row
 		vs.AddVersion(3, RowVersion{
-			TxnID:      5, // Different system transaction
-			IsDeleted:  true,
-			Data:       nil,
-			RowID:      3,
-			CreateTime: GetFastTimestamp(),
+			TxnID:          5, // Different system transaction
+			DeletedAtTxnID: 5,
+			Data:           nil,
+			RowID:          3,
+			CreateTime:     GetFastTimestamp(),
 		})
 
 		// Create a new snapshot
@@ -345,7 +345,7 @@ func TestDiskVersionStore(t *testing.T) {
 		// The deleted row should still be retrievable, but might be marked as deleted
 		// Note: Some implementations may not store deleted rows at all, which is also valid
 		version, found := dvs3.GetVersionFromDisk(3)
-		if found && !version.IsDeleted {
+		if found && !version.IsDeleted() {
 			t.Errorf("Row with ID 3 was found but not marked as deleted")
 		}
 	})
@@ -431,11 +431,11 @@ func TestDiskVersionStoreEdgeCases(t *testing.T) {
 
 		// Add to version store
 		vs.AddVersion(1, RowVersion{
-			TxnID:      1,
-			IsDeleted:  false,
-			Data:       row,
-			RowID:      1,
-			CreateTime: GetFastTimestamp(),
+			TxnID:          1,
+			DeletedAtTxnID: 0,
+			Data:           row,
+			RowID:          1,
+			CreateTime:     GetFastTimestamp(),
 		})
 
 		// Create snapshot
@@ -538,11 +538,11 @@ func TestDiskVersionStoreEdgeCases(t *testing.T) {
 		row[5] = storage.NewFloatValue(789.012)
 
 		vs.AddVersion(2, RowVersion{
-			TxnID:      2,
-			IsDeleted:  false,
-			Data:       row,
-			RowID:      2,
-			CreateTime: GetFastTimestamp(),
+			TxnID:          2,
+			DeletedAtTxnID: 0,
+			Data:           row,
+			RowID:          2,
+			CreateTime:     GetFastTimestamp(),
 		})
 
 		// Create second snapshot
@@ -618,11 +618,11 @@ func TestDiskAppenderFinalize(t *testing.T) {
 		row[0] = storage.NewIntegerValue(i)
 
 		version := RowVersion{
-			TxnID:      3,
-			IsDeleted:  false,
-			Data:       row,
-			RowID:      i,
-			CreateTime: GetFastTimestamp(),
+			TxnID:          3,
+			DeletedAtTxnID: 0,
+			Data:           row,
+			RowID:          i,
+			CreateTime:     GetFastTimestamp(),
 		}
 
 		err = appender.AppendRow(version)
@@ -666,7 +666,7 @@ func TestDiskAppenderFinalize(t *testing.T) {
 			t.Errorf("Expected RowID %d, got %d", i, version.RowID)
 		}
 
-		if version.IsDeleted {
+		if version.IsDeleted() {
 			t.Errorf("Expected row %d to not be deleted", i)
 		}
 

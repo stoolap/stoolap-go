@@ -1123,20 +1123,23 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 		}
 
 		vs.AddVersion(entry.RowID, RowVersion{
-			TxnID:      entry.TxnID,
-			IsDeleted:  false,
-			Data:       row,
-			RowID:      entry.RowID,
-			CreateTime: entry.Timestamp,
+			TxnID:         entry.TxnID,
+			DeletedAtTxnID: 0, // Not deleted
+			Data:          row,
+			RowID:         entry.RowID,
+			CreateTime:    entry.Timestamp,
 		})
 
 	case WALDelete:
+		// For WAL delete, we should ideally have the row data, but if not available, use nil
+		row, _ := deserializeRow(entry.Data) // Ignore error, use nil if deserialization fails
+		
 		vs.AddVersion(entry.RowID, RowVersion{
-			TxnID:      entry.TxnID,
-			IsDeleted:  true,
-			Data:       nil,
-			RowID:      entry.RowID,
-			CreateTime: entry.Timestamp,
+			TxnID:         entry.TxnID,
+			DeletedAtTxnID: entry.TxnID, // Deleted by this transaction
+			Data:          row,
+			RowID:         entry.RowID,
+			CreateTime:    entry.Timestamp,
 		})
 	}
 
@@ -1244,7 +1247,7 @@ func (pm *PersistenceManager) RecordDMLOperation(txnID int64, tableName string, 
 
 	// Determine operation type
 	var opType WALOperationType
-	if version.IsDeleted {
+	if version.IsDeleted() {
 		opType = WALDelete
 	} else {
 		opType = WALInsert // Default to insert for new data

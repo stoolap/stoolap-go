@@ -163,7 +163,7 @@ func (dvs *DiskVersionStore) CreateSnapshot() error {
 		// Record that we've processed this rowID
 		processedRowIDs.Put(rowID, struct{}{})
 
-		if version.IsDeleted {
+		if version.IsDeleted() {
 			// Skip deleted versions
 			return true
 		}
@@ -252,7 +252,7 @@ func (dvs *DiskVersionStore) CreateSnapshot() error {
 				return true // Continue on error
 			}
 
-			if version.IsDeleted {
+			if version.IsDeleted() {
 				// Skip deleted versions
 				return true
 			}
@@ -579,7 +579,7 @@ func (dvs *DiskVersionStore) LoadSnapshots() error {
 
 				// Add each row's values to the index
 				for rowID, version := range allRows {
-					if !version.IsDeleted {
+					if !version.IsDeleted() {
 						// Create values array for each row
 						values := make([]storage.ColumnValue, len(columnIDs))
 
@@ -1155,10 +1155,10 @@ func serializeRowVersion(version RowVersion) ([]byte, error) {
 	writer.WriteInt64(version.RowID)
 	writer.WriteInt64(version.TxnID)
 	writer.WriteInt64(version.CreateTime)
-	writer.WriteBool(version.IsDeleted)
+	writer.WriteInt64(version.DeletedAtTxnID)
 
 	// Write row data if not deleted
-	if !version.IsDeleted && version.Data != nil {
+	if !version.IsDeleted() && version.Data != nil {
 		rowData, err := serializeRow(version.Data)
 		if err != nil {
 			return nil, err
@@ -1358,11 +1358,11 @@ func deserializeRowVersion(data []byte) (RowVersion, error) {
 	}
 	version.CreateTime = createTime
 
-	isDeleted, err := reader.ReadBool()
+	deletedAtTxnID, err := reader.ReadInt64()
 	if err != nil {
 		return version, err
 	}
-	version.IsDeleted = isDeleted
+	version.DeletedAtTxnID = deletedAtTxnID
 
 	// Read row data if not deleted
 	rowData, err := reader.ReadBytes()
@@ -1370,7 +1370,7 @@ func deserializeRowVersion(data []byte) (RowVersion, error) {
 		return version, err
 	}
 
-	if !isDeleted && len(rowData) > 0 {
+	if version.DeletedAtTxnID == 0 && len(rowData) > 0 {
 		version.Data, err = deserializeRow(rowData)
 		if err != nil {
 			return version, err
