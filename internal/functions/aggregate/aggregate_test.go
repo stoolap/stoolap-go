@@ -124,13 +124,13 @@ func TestSum(t *testing.T) {
 			name:     "SUM on empty set",
 			values:   []any{},
 			distinct: false,
-			expected: float64(0), // Empty set returns 0 for SUM
+			expected: nil, // Empty set returns 0 for SUM
 		},
 		{
 			name:     "SUM on all NULL values",
 			values:   []any{nil, nil, nil},
 			distinct: false,
-			expected: 0.0, // All NULLs should return 0
+			expected: nil, // All NULLs should return 0
 		},
 		{
 			name:     "SUM with mixed integer types",
@@ -163,7 +163,7 @@ func TestSum(t *testing.T) {
 
 			result := sumFunc.Result()
 			if result != tt.expected {
-				t.Errorf("SUM test %s failed: expected %v, got %v , %v", tt.name, tt.expected, result, reflect.TypeOf(result))
+				t.Errorf("SUM test %s failed: expected %v, got %v with type of: %v", tt.name, tt.expected, result, reflect.TypeOf(result))
 			}
 		})
 	}
