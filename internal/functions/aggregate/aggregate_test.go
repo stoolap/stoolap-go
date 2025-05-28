@@ -420,13 +420,13 @@ func TestFirst(t *testing.T) {
 	}{
 		{
 			name:     "FIRST with multiple values",
-			values:   []any{int64(10), int64(20), int64(30)},
-			expected: int64(10), // First non-NULL value encountered
+			values:   []any{int8(10), int32(20), int64(30)},
+			expected: int8(10), // First non-NULL value encountered
 		},
 		{
 			name:     "FIRST with NULL values at start - should skip NULLs",
-			values:   []any{nil, nil, int64(15), int64(25)},
-			expected: int64(15), // First non-NULL value
+			values:   []any{nil, nil, uint64(15), uint32(25)},
+			expected: uint64(15), // First non-NULL value
 		},
 		{
 			name:     "FIRST with string values",
@@ -450,7 +450,7 @@ func TestFirst(t *testing.T) {
 		},
 		{
 			name:     "FIRST with zero values - should skip zeros",
-			values:   []any{int64(0), int64(0), int64(42)},
+			values:   []any{int64(0), uint32(0), int64(42)},
 			expected: int64(42), // Skip zero values based on implementation
 		},
 		{
@@ -476,7 +476,7 @@ func TestFirst(t *testing.T) {
 
 			result := firstFunc.Result()
 			if result != tt.expected {
-				t.Errorf("FIRST test %s failed: expected %v, got %v", tt.name, tt.expected, result)
+				t.Errorf("FIRST test %s failed: expected %v, got %v with type of: %v", tt.name, tt.expected, result, reflect.TypeOf(result))
 			}
 		})
 	}
