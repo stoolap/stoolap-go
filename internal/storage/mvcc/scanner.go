@@ -256,7 +256,7 @@ func (s *RangeScanner) Next() bool {
 		}
 
 		// Check if the current ID exists and is visible
-		if version, exists := s.currentBatch.Get(s.currentID); exists && !version.IsDeleted {
+		if version, exists := s.currentBatch.Get(s.currentID); exists {
 			s.currentRow = version.Data
 			s.currentID++ // Advance ID for next iteration
 			return true
@@ -415,7 +415,7 @@ func (s *MVCCScanner) resourceWatch() {
 		shouldClose := s.shouldClose.Load()
 		if shouldClose > 0 {
 			if elapsed := time.Now().UnixNano() - shouldClose; elapsed > maxDuration.Nanoseconds() {
-				// fmt.Printf("Warning: scanner has been idle for %s, closing...\n", time.Duration(elapsed))
+				// log.Printf("Warning: scanner has been idle for %s, closing...\n", time.Duration(elapsed))
 				s.Close()
 				return
 			}

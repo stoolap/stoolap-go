@@ -13,11 +13,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package sql
+package executor
 
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -437,7 +438,7 @@ func (r *StreamingJoinResult) Next() bool {
 		// Build the hash table from the left table
 		if err := r.buildHashTable(); err != nil {
 			// Log error (in a real implementation, propagate it)
-			fmt.Printf("Error building hash table: %v\n", err)
+			log.Printf("Error building hash table: %v\n", err)
 			return false
 		}
 	}
@@ -469,7 +470,7 @@ func (r *StreamingJoinResult) Next() bool {
 	// Get the next batch of matches
 	if err := r.matchAndBufferRows(); err != nil {
 		// Log error (in a real implementation, propagate it)
-		fmt.Printf("Error matching rows: %v\n", err)
+		log.Printf("Error matching rows: %v\n", err)
 		return false
 	}
 

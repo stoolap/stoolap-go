@@ -19,14 +19,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stoolap/stoolap"
 	"github.com/stoolap/stoolap/internal/functions/scalar"
-	"github.com/stoolap/stoolap/pkg"
 )
 
 func TestCastDiagnosis(t *testing.T) {
 	// Create a simple test database
 	ctx := context.Background()
-	db, _ := pkg.Open("memory://")
+	db, _ := stoolap.Open("memory://")
 	defer db.Close()
 
 	executor := db.Executor()

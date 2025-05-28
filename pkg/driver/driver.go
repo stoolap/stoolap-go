@@ -21,10 +21,13 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
-	"github.com/stoolap/stoolap/pkg"
+	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap/internal/sql/executor"
+	"github.com/stoolap/stoolap/internal/storage"
 
 	// Import database storage engine
 	_ "github.com/stoolap/stoolap/internal/storage/mvcc"
@@ -54,7 +57,7 @@ type Driver struct {
 
 // connEntry holds a connection and its reference count
 type connEntry struct {
-	db       *pkg.DB
+	db       *stoolap.DB
 	refCount int
 	lastUsed time.Time
 	createMu sync.Mutex // Mutex to synchronize concurrent creation attempts
@@ -114,7 +117,7 @@ func (d *Driver) Open(name string) (driver.Conn, error) {
 	// If database is not initialized, initialize it
 	if entry.db == nil {
 		var err error
-		entry.db, err = pkg.Open(name)
+		entry.db, err = stoolap.Open(name)
 		if err != nil {
 			return nil, err
 		}
@@ -134,20 +137,21 @@ func (d *Driver) Open(name string) (driver.Conn, error) {
 		stmts:   make(map[string]*Stmt),
 	}
 
-	// Initialize the executor
-	conn.executor = entry.db.Executor()
+	// Create a new executor instance for this connection
+	// Each connection needs its own executor to maintain independent isolation levels
+	conn.executor = executor.NewExecutor(entry.db.Engine())
 
 	return conn, nil
 }
 
 // Conn represents a connection to a stoolap database with optimized concurrency
 type Conn struct {
-	db       *pkg.DB
+	db       *stoolap.DB
 	driver   *Driver
 	dsn      string
 	tx       driver.Tx
 	closed   bool             // Track if the connection has been closed
-	executor pkg.Executor     // Cached executor instance to reduce memory usage
+	executor stoolap.Executor // Cached executor instance to reduce memory usage
 	mu       *sync.Mutex      // Connection-specific mutex for thread safety
 	stmtsMu  *sync.RWMutex    // Mutex for statements map
 	stmts    map[string]*Stmt // Cache of prepared statements
@@ -293,7 +297,7 @@ func (c *Conn) Close() error {
 
 		err := entry.db.Close()
 		if err != nil {
-			fmt.Printf("Error: closing database: %v\n", err)
+			log.Printf("Error: closing database: %v\n", err)
 		}
 
 		c.driver.connsMu.Lock()
@@ -378,7 +382,14 @@ func (c *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 	isolationLevel := sql.LevelReadCommitted
 
 	if opts.Isolation != driver.IsolationLevel(0) {
+		// Use the explicitly specified isolation level
 		isolationLevel = sql.IsolationLevel(opts.Isolation)
+	} else {
+		// Use the executor's default isolation level
+		executorLevel := c.executor.GetDefaultIsolationLevel()
+		if executorLevel == storage.SnapshotIsolation {
+			isolationLevel = sql.LevelSnapshot
+		}
 	}
 
 	// Begin a transaction in the underlying engine with isolation level in context

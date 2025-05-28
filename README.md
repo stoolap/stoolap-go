@@ -121,11 +121,10 @@ func main() {
 
 ### Connection Strings
 
-Stoolap supports three storage modes:
+Stoolap supports two storage modes:
 
 - **In-Memory**: `memory://` - Fast, non-persistent storage for maximum performance
 - **File-Based**: `file:///path/to/data` - Durable storage with persistence
-- **Database Engine**: `db:///path/to/data` - MVCC storage with transaction isolation and durability
 
 ## Supported SQL Features
 

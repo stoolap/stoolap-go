@@ -19,14 +19,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stoolap/stoolap/pkg"
+	"github.com/stoolap/stoolap"
 )
 
 // TestCastSpecialHelper creates a specialized test to diagnose the CAST issue
 func TestCastSpecialHelper(t *testing.T) {
 	// Create a test database
 	ctx := context.Background()
-	db, _ := pkg.Open("memory://")
+	db, _ := stoolap.Open("memory://")
 	defer db.Close()
 
 	// Get the SQL executor

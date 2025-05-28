@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap"
 	"github.com/stoolap/stoolap/internal/parser"
-	"github.com/stoolap/stoolap/pkg"
 )
 
 // Helper function to convert interface slice to driver.NamedValue slice
@@ -40,7 +40,7 @@ func toNamedValues(params []interface{}) []driver.NamedValue {
 
 func TestParameterBinding(t *testing.T) {
 	// Create a memory engine for testing
-	db, err := pkg.Open("memory://")
+	db, err := stoolap.Open("memory://")
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)
 	}
@@ -254,7 +254,7 @@ func isSelect(query string) bool {
 
 func TestBindExpressionTraversal(t *testing.T) {
 	// Create a memory engine for testing
-	db, err := pkg.Open("memory://")
+	db, err := stoolap.Open("memory://")
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)
 	}

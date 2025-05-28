@@ -19,14 +19,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stoolap/stoolap/pkg"
+	"github.com/stoolap/stoolap"
 )
 
 // TestCastFix tests a direct fix for the CAST expression issue in WHERE clauses
 func TestCastFix(t *testing.T) {
 	// Create a test database
 	ctx := context.Background()
-	db, _ := pkg.Open("memory://")
+	db, _ := stoolap.Open("memory://")
 	defer db.Close()
 
 	executor := db.Executor()

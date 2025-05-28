@@ -21,12 +21,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap/pkg"
+	"github.com/stoolap/stoolap"
 )
 
 func BenchmarkParameterBinding(b *testing.B) {
 	// Create a memory engine for testing
-	db, err := pkg.Open("memory://")
+	db, err := stoolap.Open("memory://")
 	if err != nil {
 		b.Fatalf("Failed to create engine: %v", err)
 	}

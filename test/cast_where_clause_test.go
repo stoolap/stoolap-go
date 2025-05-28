@@ -19,13 +19,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stoolap/stoolap/pkg"
+	"github.com/stoolap/stoolap"
 )
 
 // TestCastWhereClause tests CAST expressions in WHERE clauses
 func TestCastWhereClause(t *testing.T) {
 	ctx := context.Background()
-	db, _ := pkg.Open("memory://")
+	db, _ := stoolap.Open("memory://")
 	defer db.Close()
 
 	executor := db.Executor()

@@ -111,7 +111,7 @@ func (s *MVCCDirectScanner) collectVisibleRowIDs() {
 
 			// Use ForEach to iterate through all entries
 			s.versionStore.versions.ForEach(func(rowID int64, version *RowVersion) bool {
-				if !version.IsDeleted && s.registry.IsVisible(version.TxnID, s.txnID) {
+				if !version.IsDeleted() && s.registry.IsVisible(version.TxnID, s.txnID) {
 					s.rowIDs = append(s.rowIDs, rowID)
 				}
 
@@ -137,7 +137,7 @@ func (s *MVCCDirectScanner) collectVisibleRowIDs() {
 	// Single pass approach - apply visibility and filter in one go
 	s.versionStore.versions.ForEach(func(rowID int64, version *RowVersion) bool {
 		// Skip deleted or invisible versions
-		if version.IsDeleted || !s.registry.IsVisible(version.TxnID, s.txnID) {
+		if version.IsDeleted() || !s.registry.IsVisible(version.TxnID, s.txnID) {
 			return true
 		}
 
@@ -187,7 +187,7 @@ func (s *MVCCDirectScanner) Row() storage.Row {
 	// Use haxmap's Get method which is concurrency-safe
 	versionPtr, exists := s.versionStore.versions.Get(rowID)
 
-	if !exists || versionPtr.IsDeleted {
+	if !exists || versionPtr.IsDeleted() {
 		return nil
 	}
 

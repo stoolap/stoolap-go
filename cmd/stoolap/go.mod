@@ -6,7 +6,7 @@ require (
 	github.com/chzyer/readline v1.5.1
 	github.com/jedib0t/go-pretty/v6 v6.6.7
 	github.com/spf13/cobra v1.9.1
-	github.com/stoolap/stoolap v0.0.6
+	github.com/stoolap/stoolap v0.0.7
 )
 
 require (

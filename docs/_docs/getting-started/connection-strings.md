@@ -76,6 +76,61 @@ Available options:
 
 ## Usage Examples
 
+### Using the New Simplified API (Recommended)
+
+Stoolap now provides a simplified API that doesn't require the `database/sql` package:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    
+    "github.com/stoolap/stoolap"
+)
+
+func main() {
+    // Open database using the simplified API
+    db, err := stoolap.Open("memory://")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
+    
+    // Execute queries directly
+    ctx := context.Background()
+    _, err = db.Exec(ctx, "CREATE TABLE users (id INT, name TEXT)")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Query data with parameters
+    rows, err := db.Query(ctx, "SELECT * FROM users WHERE id = ?", 1)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer rows.Close()
+    
+    // Use transactions
+    tx, err := db.Begin()
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    _, err = tx.ExecContext(ctx, "INSERT INTO users VALUES (?, ?)", 1, "Alice")
+    if err != nil {
+        tx.Rollback()
+        log.Fatal(err)
+    }
+    
+    err = tx.Commit()
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
 ### Command Line Example
 
 ```bash
@@ -89,7 +144,9 @@ stoolap -db file:///data/mydb
 stoolap -db file:///data/mydb
 ```
 
-### Go Application Examples
+### Using Standard database/sql Package
+
+You can also use Stoolap with Go's standard `database/sql` package:
 
 #### In-Memory Database
 

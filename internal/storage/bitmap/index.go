@@ -25,6 +25,7 @@ import (
 	"crypto/md5"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -932,7 +933,7 @@ func (idx *Index) LoadFromDir(indexDir string) error {
 		data, err := os.ReadFile(filename)
 		if err != nil {
 			// Log error but continue with other bitmaps
-			fmt.Printf("Warning: Failed to read bitmap file %s: %v\n", filename, err)
+			log.Printf("Warning: Failed to read bitmap file %s: %v\n", filename, err)
 			continue
 		}
 
@@ -1043,7 +1044,7 @@ func loadBitmapsFromManifest(indexDir string, idx *Index) error {
 		data, err := os.ReadFile(filename)
 		if err != nil {
 			// Log error but continue with other bitmaps
-			fmt.Printf("Warning: Failed to read bitmap file %s: %v\n", filename, err)
+			log.Printf("Warning: Failed to read bitmap file %s: %v\n", filename, err)
 			continue
 		}
 

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stoolap/stoolap/pkg"
+	"github.com/stoolap/stoolap"
 )
 
 func TestCastDebug(t *testing.T) {
@@ -28,7 +28,7 @@ func TestCastDebug(t *testing.T) {
 	ctx := context.Background()
 
 	// Create an in-memory database
-	db, err := pkg.Open("memory://")
+	db, err := stoolap.Open("memory://")
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}

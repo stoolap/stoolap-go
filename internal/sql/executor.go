@@ -13,21 +13,21 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-// Package sql provides SQL execution functionality
+// package executor provides SQL execution functionality
 package sql
 
 import (
 	"context"
 	"database/sql/driver"
 
-	sql "github.com/stoolap/stoolap/internal/sql/executor"
+	"github.com/stoolap/stoolap/internal/sql/executor"
 	"github.com/stoolap/stoolap/internal/storage"
 )
 
 // NewExecutor creates a new SQL executor
 func NewExecutor(engine storage.Engine) *Executor {
 	// Create the real executor
-	sqlExecutor := sql.NewExecutor(engine)
+	sqlExecutor := executor.NewExecutor(engine)
 
 	return &Executor{
 		sqlExecutor: sqlExecutor,
@@ -36,7 +36,7 @@ func NewExecutor(engine storage.Engine) *Executor {
 
 // Executor executes SQL statements
 type Executor struct {
-	sqlExecutor *sql.Executor
+	sqlExecutor *executor.Executor
 }
 
 // Execute executes a SQL statement

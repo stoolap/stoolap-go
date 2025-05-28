@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package sql
+package executor
 
 import (
 	"fmt"
@@ -456,10 +456,10 @@ func (e *Executor) executeCreateTable(tx storage.Transaction, stmt *parser.Creat
 			}
 		}
 
-		// Add column to schema
+		// Add column to schema (normalize column name to lowercase)
 		schema.Columns[i] = storage.SchemaColumn{
 			ID:         i,
-			Name:       colDef.Name.Value,
+			Name:       strings.ToLower(colDef.Name.Value),
 			Type:       dataType,
 			Nullable:   nullable,
 			PrimaryKey: primaryKey,

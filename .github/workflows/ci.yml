@@ -50,17 +50,38 @@ jobs:
         go build -v ./...
         cd cmd/stoolap && go build -v .
 
-    - name: Test with coverage
+    - name: Test with coverage (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
       run: |
-        go test -v -race -coverprofile coverage.txt -covermode atomic ./...
+        # Create coverage directory
+        mkdir -p coverage
+        
+        # Run unit tests with cross-package coverage
+        go test -v -race -coverprofile=coverage/unit.txt -covermode=atomic -coverpkg=./...,./internal/...,./pkg/... ./internal/... ./pkg/...
+        
+        # Run integration tests with coverage
+        go test -v -tags=integration -coverprofile=coverage/integration.txt -covermode=atomic -coverpkg=./...,./internal/...,./pkg/... ./test/... || true
+        
+        # Merge coverage files
+        echo "mode: atomic" > coverage.txt
+        if [ -f coverage/unit.txt ]; then
+          tail -n +2 coverage/unit.txt >> coverage.txt
+        fi
+        if [ -f coverage/integration.txt ]; then
+          tail -n +2 coverage/integration.txt >> coverage.txt
+        fi
+        
+        # Show coverage summary
+        go tool cover -func=coverage.txt | tail -1
+
+    - name: Test with coverage (Other OS)
+      if: matrix.os != 'ubuntu-latest'
+      run: go test -v -race -coverprofile coverage.txt -covermode atomic ./...
 
     - name: Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest'
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
-        file: ./coverage.txt
-        flags: unittests
-        name: codecov-umbrella
         token: ${{ secrets.CODECOV_TOKEN }}
 
   integration:

@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stoolap/stoolap/pkg"
+	"github.com/stoolap/stoolap"
 	_ "github.com/stoolap/stoolap/pkg/driver" // Register stoolap driver
 )
 
@@ -41,7 +41,7 @@ func TestIndexNamePersistence(t *testing.T) {
 	connString := "file://" + dbPath
 
 	// Create and set up the database
-	db, err := pkg.Open(connString)
+	db, err := stoolap.Open(connString)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestIndexNamePersistence(t *testing.T) {
 	}
 
 	// Reopen the database
-	db, err = pkg.Open(connString)
+	db, err = stoolap.Open(connString)
 	if err != nil {
 		t.Fatalf("Failed to reopen database: %v", err)
 	}

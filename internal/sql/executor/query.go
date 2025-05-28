@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package sql
+package executor
 
 import (
 	"context"
@@ -423,7 +423,8 @@ func (e *Executor) executeSelectWithContext(ctx context.Context, tx storage.Tran
 		for i, col := range stmt.Columns {
 			// Handle column references
 			if colRef, ok := col.(*parser.Identifier); ok {
-				columns[i] = colRef.Value
+				// Normalize column name to lowercase
+				columns[i] = strings.ToLower(colRef.Value)
 			} else if aliased, ok := col.(*parser.AliasedExpression); ok {
 				// For aliased expressions, use the alias name
 				columns[i] = aliased.Alias.Value

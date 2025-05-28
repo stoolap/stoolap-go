@@ -13,8 +13,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-// Package sql provides SQL execution functionality
-package sql
+// package executor provides SQL execution functionality
+package executor
 
 import (
 	"context"
@@ -1096,6 +1096,29 @@ func (r *AggregateResult) initialize() error {
 		}
 
 		// Add this aggregated row to the result
+		r.aggregatedRows = append(r.aggregatedRows, resultRow)
+	}
+
+	// Special case: if we have aggregate functions but no groups (no rows matched)
+	// we still need to return one row with aggregate results
+	if len(groups) == 0 && len(r.functions) > 0 && len(r.groupByColumns) == 0 {
+		// Create a single row with aggregate results for empty set
+		resultRow := make(map[string]storage.ColumnValue, len(r.columns))
+
+		// Process each aggregate function
+		for _, fn := range r.functions {
+			colName := fn.GetColumnName()
+			funcName := strings.ToUpper(fn.Name)
+
+			if funcName == "COUNT" {
+				// COUNT returns 0 for empty sets
+				resultRow[colName] = storage.NewIntegerValue(0)
+			} else {
+				// All other aggregate functions return NULL for empty sets
+				resultRow[colName] = nil
+			}
+		}
+
 		r.aggregatedRows = append(r.aggregatedRows, resultRow)
 	}
 

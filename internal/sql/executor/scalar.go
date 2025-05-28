@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package sql
+package executor
 
 import (
 	"context"
@@ -167,6 +167,29 @@ func (r *scalarFunctionResult) Next() bool {
 
 			case *parser.NullLiteral:
 				args[j] = nil
+
+			case *parser.InfixExpression:
+				// Evaluate infix expressions (like -10/3.0)
+				evaluator := NewEvaluator(r.Context(), r.registry)
+				evaluator.row = r.rowMap
+				result, err := evaluator.Evaluate(expr)
+				if err != nil {
+					args[j] = nil
+				} else {
+					args[j] = result.AsInterface()
+				}
+
+			case *parser.PrefixExpression:
+				// Evaluate prefix expressions (like -10)
+				evaluator := NewEvaluator(r.Context(), r.registry)
+				evaluator.row = r.rowMap
+				result, err := evaluator.Evaluate(expr)
+				if err != nil {
+					args[j] = nil
+				} else {
+					args[j] = result.AsInterface()
+				}
+
 			case *parser.FunctionCall:
 				// Nested function call - need to evaluate it first
 				// For CAST functions, pass the target type as a string constant
@@ -225,8 +248,25 @@ func (r *scalarFunctionResult) Next() bool {
 		}
 
 		// Get the function implementation
-		// Special handling for our synthetic arithmetic functions
-		if fn.Function == "ADD" || fn.Function == "SUBTRACT" || fn.Function == "MULTIPLY" || fn.Function == "DIVIDE" || fn.Function == "MODULO" {
+		// Special handling for pass-through columns
+		if fn.Function == "__PASSTHROUGH__" {
+			// This is a simple column reference, just copy the value
+			if len(fn.Arguments) > 0 {
+				if ident, ok := fn.Arguments[0].(*parser.Identifier); ok {
+					if val, ok := r.rowMap[ident.Value]; ok {
+						r.currentRow[i] = val
+					} else if val, ok := r.rowMap[strings.ToLower(ident.Value)]; ok {
+						r.currentRow[i] = val
+					} else {
+						r.currentRow[i] = nil
+					}
+				} else {
+					r.currentRow[i] = nil
+				}
+			} else {
+				r.currentRow[i] = nil
+			}
+		} else if fn.Function == "ADD" || fn.Function == "SUBTRACT" || fn.Function == "MULTIPLY" || fn.Function == "DIVIDE" || fn.Function == "MODULO" {
 			// Direct arithmetic evaluation
 			// Create an evaluator
 			evaluator := NewEvaluator(r.Context(), r.registry)
@@ -430,16 +470,25 @@ func (e *Executor) executeSelectWithScalarFunctions(ctx context.Context, tx stor
 
 	// Extract required columns and functions
 	requiredColumns := make([]string, 0)
-	scalarFunctions := make([]*ScalarFunctionInfo, 0)
 	columnAliases := make(map[string]string)
 
+	// Track all SELECT items (both simple columns and expressions) in order
+	allSelectItems := make([]*ScalarFunctionInfo, 0)
+
 	// Analyze each column expression
-	for _, colExpr := range stmt.Columns {
+	for colIndex, colExpr := range stmt.Columns {
 		switch expr := colExpr.(type) {
 		case *parser.Identifier:
 			// Simple column reference
 			if expr.Value != "*" {
 				requiredColumns = append(requiredColumns, expr.Value)
+				// Add simple column as a pass-through "function"
+				allSelectItems = append(allSelectItems, &ScalarFunctionInfo{
+					Name:        "__PASSTHROUGH__",
+					Arguments:   []parser.Expression{expr},
+					ColumnName:  expr.Value,
+					ColumnIndex: colIndex,
+				})
 			} else {
 				// For wildcard, we'll get all columns from the schema
 				schema, err := e.engine.GetTableSchema(tableName)
@@ -448,6 +497,13 @@ func (e *Executor) executeSelectWithScalarFunctions(ctx context.Context, tx stor
 				}
 				for _, col := range schema.Columns {
 					requiredColumns = append(requiredColumns, col.Name)
+					// Add each column as a pass-through "function"
+					allSelectItems = append(allSelectItems, &ScalarFunctionInfo{
+						Name:        "__PASSTHROUGH__",
+						Arguments:   []parser.Expression{&parser.Identifier{Value: col.Name}},
+						ColumnName:  col.Name,
+						ColumnIndex: len(allSelectItems),
+					})
 				}
 			}
 
@@ -467,13 +523,14 @@ func (e *Executor) executeSelectWithScalarFunctions(ctx context.Context, tx stor
 			sb.WriteString(strings.ToLower(expr.TypeName))
 			castColName := sb.String()
 
-			scalarFunctions = append(scalarFunctions, &ScalarFunctionInfo{
+			functionInfo := &ScalarFunctionInfo{
 				Name:      "CAST",
 				Arguments: funcCall.Arguments,
 				// Use a descriptive column name
 				ColumnName:  castColName,
-				ColumnIndex: len(requiredColumns) + len(scalarFunctions) - 1,
-			})
+				ColumnIndex: colIndex,
+			}
+			allSelectItems = append(allSelectItems, functionInfo)
 
 		case *parser.FunctionCall:
 			// Scalar function
@@ -489,13 +546,14 @@ func (e *Executor) executeSelectWithScalarFunctions(ctx context.Context, tx stor
 				funcColName := sb.String()
 
 				// Add the function to our list
-				scalarFunctions = append(scalarFunctions, &ScalarFunctionInfo{
+				functionInfo := &ScalarFunctionInfo{
 					Name:      expr.Function,
 					Arguments: expr.Arguments,
 					// Use a default column name based on function
 					ColumnName:  funcColName,
-					ColumnIndex: len(requiredColumns) + len(scalarFunctions) - 1,
-				})
+					ColumnIndex: colIndex,
+				}
+				allSelectItems = append(allSelectItems, functionInfo)
 			} else {
 				// This is an aggregate function, should be handled by the aggregation executor
 				return e.executeSelectWithAggregation(ctx, tx, stmt)
@@ -508,6 +566,13 @@ func (e *Executor) executeSelectWithScalarFunctions(ctx context.Context, tx stor
 				// Aliased column
 				requiredColumns = append(requiredColumns, innerExpr.Value)
 				columnAliases[expr.Alias.Value] = innerExpr.Value
+				// Add aliased column as a pass-through "function"
+				allSelectItems = append(allSelectItems, &ScalarFunctionInfo{
+					Name:        "__PASSTHROUGH__",
+					Arguments:   []parser.Expression{innerExpr},
+					ColumnName:  expr.Alias.Value,
+					ColumnIndex: colIndex,
+				})
 
 			case *parser.CastExpression:
 				// Aliased CAST expression
@@ -519,12 +584,13 @@ func (e *Executor) executeSelectWithScalarFunctions(ctx context.Context, tx stor
 				funcCall := innerExpr.ToFunctionCall()
 
 				// Add the CAST function to our list using the alias as column name
-				scalarFunctions = append(scalarFunctions, &ScalarFunctionInfo{
+				functionInfo := &ScalarFunctionInfo{
 					Name:        "CAST",
 					Arguments:   funcCall.Arguments,
 					ColumnName:  expr.Alias.Value,
-					ColumnIndex: len(requiredColumns) + len(scalarFunctions) - 1,
-				})
+					ColumnIndex: colIndex,
+				}
+				allSelectItems = append(allSelectItems, functionInfo)
 
 			case *parser.FunctionCall:
 				// Aliased function
@@ -534,12 +600,13 @@ func (e *Executor) executeSelectWithScalarFunctions(ctx context.Context, tx stor
 					requiredColumns = append(requiredColumns, argColumns...)
 
 					// Add the function to our list with the alias as column name
-					scalarFunctions = append(scalarFunctions, &ScalarFunctionInfo{
+					functionInfo := &ScalarFunctionInfo{
 						Name:        innerExpr.Function,
 						Arguments:   innerExpr.Arguments,
 						ColumnName:  expr.Alias.Value,
-						ColumnIndex: len(requiredColumns) + len(scalarFunctions) - 1,
-					})
+						ColumnIndex: colIndex,
+					}
+					allSelectItems = append(allSelectItems, functionInfo)
 				} else {
 					// This is an aggregate function, should be handled by the aggregation executor
 					return e.executeSelectWithAggregation(ctx, tx, stmt)
@@ -573,15 +640,16 @@ func (e *Executor) executeSelectWithScalarFunctions(ctx context.Context, tx stor
 				}
 
 				// Add the expression as a special scalar function
-				scalarFunctions = append(scalarFunctions, &ScalarFunctionInfo{
+				functionInfo := &ScalarFunctionInfo{
 					Name: functionName,
 					Arguments: []parser.Expression{
 						innerExpr.Left,
 						innerExpr.Right,
 					},
 					ColumnName:  expr.Alias.Value,
-					ColumnIndex: len(requiredColumns) + len(scalarFunctions) - 1,
-				})
+					ColumnIndex: colIndex,
+				}
+				allSelectItems = append(allSelectItems, functionInfo)
 
 			default:
 				return nil, fmt.Errorf("unsupported expression in aliased SELECT item: %T", expr.Expression)
@@ -621,18 +689,19 @@ func (e *Executor) executeSelectWithScalarFunctions(ctx context.Context, tx stor
 			// Use strings.Builder instead of fmt.Sprintf for better performance
 			var sb strings.Builder
 			sb.WriteString("column")
-			sb.WriteString(strconv.Itoa(len(requiredColumns) + len(scalarFunctions) + 1))
+			sb.WriteString(strconv.Itoa(colIndex + 1))
 			colName := sb.String()
 
-			scalarFunctions = append(scalarFunctions, &ScalarFunctionInfo{
+			functionInfo := &ScalarFunctionInfo{
 				Name: functionName,
 				Arguments: []parser.Expression{
 					infixExpr.Left,
 					infixExpr.Right,
 				},
 				ColumnName:  colName,
-				ColumnIndex: len(requiredColumns) + len(scalarFunctions) - 1,
-			})
+				ColumnIndex: colIndex,
+			}
+			allSelectItems = append(allSelectItems, functionInfo)
 
 		default:
 			return nil, fmt.Errorf("unsupported expression in SELECT with scalar functions: %T", colExpr)
@@ -688,7 +757,7 @@ func (e *Executor) executeSelectWithScalarFunctions(ctx context.Context, tx stor
 
 	// Create a ScalarResult to apply scalar functions with improved handling of v3 storage types
 	// This has been updated to handle v3 storage types better
-	result := NewScalarResult(baseResult, scalarFunctions, columnAliases)
+	result := NewScalarResult(baseResult, allSelectItems, columnAliases)
 
 	// Apply ORDER BY, LIMIT, OFFSET if specified
 	if stmt.OrderBy != nil || stmt.Limit != nil || stmt.Offset != nil {

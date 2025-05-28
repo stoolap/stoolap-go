@@ -19,14 +19,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stoolap/stoolap/pkg"
+	"github.com/stoolap/stoolap"
 )
 
 func TestColumnAlias(t *testing.T) {
 	ctx := context.Background()
 
 	// Create an in-memory database
-	db, err := pkg.Open("memory://")
+	db, err := stoolap.Open("memory://")
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}

@@ -20,7 +20,7 @@ import (
 	"database/sql/driver"
 	"testing"
 
-	"github.com/stoolap/stoolap/pkg"
+	"github.com/stoolap/stoolap"
 )
 
 // Helper function to convert interface slice to driver.NamedValue slice
@@ -39,7 +39,7 @@ func toQueryCacheNamedValues(params []interface{}) []driver.NamedValue {
 // TestQueryCacheBasic tests the basic functionality of the query cache
 func TestQueryCacheBasic(t *testing.T) {
 	// Create a memory engine for testing
-	db, err := pkg.Open("memory://")
+	db, err := stoolap.Open("memory://")
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)
 	}

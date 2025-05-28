@@ -177,6 +177,9 @@ type Parameter struct {
 func (p *Parameter) expressionNode()      {}
 func (p *Parameter) TokenLiteral() string { return p.Token.Literal }
 func (p *Parameter) String() string {
+	if p.Token.Literal != "" {
+		return p.Token.Literal
+	}
 	if p.Name == "" {
 		return "?"
 	}
@@ -194,7 +197,12 @@ type PrefixExpression struct {
 func (pe *PrefixExpression) expressionNode()      {}
 func (pe *PrefixExpression) TokenLiteral() string { return pe.Token.Literal }
 func (pe *PrefixExpression) String() string {
-	return fmt.Sprintf("(%s%s)", pe.Operator, pe.Right.String())
+	// For unary minus/plus, don't add space
+	if pe.Operator == "-" || pe.Operator == "+" {
+		return fmt.Sprintf("(%s%s)", pe.Operator, pe.Right.String())
+	}
+	// For other operators like NOT, add space
+	return fmt.Sprintf("(%s %s)", pe.Operator, pe.Right.String())
 }
 func (pe *PrefixExpression) Position() Position { return pe.Token.Position }
 

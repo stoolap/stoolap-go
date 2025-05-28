@@ -78,9 +78,35 @@ On Windows:
 2. Place the executable in a suitable location, such as `C:\Program Files\Stoolap`
 3. Add the directory to your PATH through System Properties > Advanced > Environment Variables
 
+## Using Stoolap as a Library
+
+To use Stoolap in your Go application, you can import it directly:
+
+```bash
+go get github.com/stoolap/stoolap
+```
+
+Then use it in your code:
+
+```go
+import "github.com/stoolap/stoolap"
+
+func main() {
+    db, err := stoolap.Open("memory://")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
+    
+    // Use the database...
+}
+```
+
+See the [API Reference](api-reference) for complete documentation of the Stoolap API.
+
 ## Verifying Installation
 
-To verify that Stoolap was installed correctly:
+To verify that Stoolap CLI was installed correctly:
 
 ```bash
 stoolap --version
@@ -92,8 +118,9 @@ This should display the version number of your Stoolap installation.
 
 After installing Stoolap, you can:
 
-- Follow the [Quick Start Tutorial](quickstart) to create your first database
+- Follow the [Quick Start Tutorial](quickstart) to create your first database using the CLI
 - Learn about [Connection Strings](connection-strings) to configure your database
+- Check the [API Reference](api-reference) for using Stoolap in your Go applications
 - Check the [SQL Commands](sql-commands) reference for working with data
 
 ## Troubleshooting

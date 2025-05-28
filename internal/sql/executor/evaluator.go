@@ -13,8 +13,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-// Package sql provides SQL execution functionality
-package sql
+// package executor provides SQL execution functionality
+package executor
 
 import (
 	"context"

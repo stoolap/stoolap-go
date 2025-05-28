@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap"
 	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/pkg"
 )
 
 // testColumnValue is a simple implementation of storage.ColumnValue for testing
@@ -121,7 +121,7 @@ func (v *testColumnValue) Compare(val storage.ColumnValue) (int, error) {
 func TestSimpleParameter(t *testing.T) {
 	// Create a memory engine for testing
 	t.Log("Opening database connection...")
-	db, err := pkg.Open("memory://")
+	db, err := stoolap.Open("memory://")
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)
 	}

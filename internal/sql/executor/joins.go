@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package sql
+package executor
 
 import (
 	"context"
@@ -357,8 +357,8 @@ func (r *ProjectedColumnsResult) Next() bool {
 				value = storage.NewNullValue(storage.TEXT)
 			} else {
 				// Check if the evaluated value is a NULL ColumnValue
-				if cv, ok := baseValue.(storage.ColumnValue); ok && cv != nil && cv.IsNull() {
-					value = cv // Use the NULL value directly
+				if baseValue != nil && baseValue.IsNull() {
+					value = baseValue // Use the NULL value directly
 				} else {
 					value = storage.ValueToColumnValue(baseValue, storage.TEXT)
 				}
@@ -372,12 +372,7 @@ func (r *ProjectedColumnsResult) Next() bool {
 			if err != nil {
 				value = storage.NewNullValue(storage.TEXT)
 			} else {
-				// Check if the evaluated value is a NULL ColumnValue
-				if cv, ok := evaluatedValue.(storage.ColumnValue); ok && cv != nil && cv.IsNull() {
-					value = cv // Use the NULL value directly
-				} else {
-					value = storage.ValueToColumnValue(evaluatedValue, storage.TEXT)
-				}
+				value = evaluatedValue
 			}
 		}
 

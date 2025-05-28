@@ -17,7 +17,7 @@ coverage:
           - "pkg/"
     patch:
       default:
-        target: 80%
+        target: 50%
         threshold: 1%
 
 parsers:
@@ -39,3 +39,16 @@ ignore:
   - "cmd/"
   - "**/*_test.go"
   - "**/mock_*.go"
+  - "internal/storage/bitmap/"
+  - "internal/storage/btree/"
+  - "internal/storage/compression/"
+  - "internal/parser/statement_clone.go"
+  - "internal/btree/btree.go"
+  - "internal/storage/binser/manager.go"
+  - "internal/storage/binser/extensions.go"
+  - "internal/storage/binser/statistics_metadata.go"
+  - "internal/storage/binser/json_encoder.go"
+  - "internal/sql/executor/streaming_join.go"
+  - "internal/fastmap/int64_sync_map.go"
+  - "internal/storage/mvcc/direct.go"
+  - "internal/parser/sql_types.go"

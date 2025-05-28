@@ -17,6 +17,7 @@ Stoolap is a Hybrid Transactional/Analytical Processing (HTAP) database engine t
 * [Installation Guide](getting-started/installation) - How to install and set up Stoolap
 * [Quick Start Tutorial](getting-started/quickstart) - A step-by-step guide to your first Stoolap database
 * [Connection String Reference](getting-started/connection-strings) - Understanding and using Stoolap connection strings
+* [API Reference](getting-started/api-reference) - Complete API documentation for the Stoolap package
 
 ### SQL Reference
 * [Data Types](data-types/data-types) - All supported data types and their behaviors

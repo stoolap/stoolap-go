@@ -16,6 +16,7 @@ limitations under the License.
 package mvcc
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,32 +32,73 @@ const (
 // TransactionRegistry manages transaction states and visibility rules
 // Lock-free implementation using our optimized SegmentInt64Map for optimal performance and concurrency
 type TransactionRegistry struct {
-	nextTxnID             atomic.Int64
-	activeTransactions    *fastmap.SegmentInt64Map[int64] // txnID -> begin timestamp
-	committedTransactions *fastmap.SegmentInt64Map[int64] // txnID -> commit timestamp
-	isolationLevel        storage.IsolationLevel
-	accepting             atomic.Bool // Flag to control if new transactions are accepted
+	nextTxnID                 atomic.Int64
+	activeTransactions        *fastmap.SegmentInt64Map[int64] // txnID -> begin sequence number
+	committedTransactions     *fastmap.SegmentInt64Map[int64] // txnID -> commit sequence number
+	globalIsolationLevel      storage.IsolationLevel
+	transactionIsolationLevel *fastmap.Int64Map[storage.IsolationLevel] // Per-transaction isolation level
+	accepting                 atomic.Bool                               // Flag to control if new transactions are accepted
+	nextSequence              atomic.Int64                              // Single monotonic sequence for both begin and commit
+
+	mu sync.RWMutex // RWMutex for additional safety in some operations
 }
 
 // NewTransactionRegistry creates a new transaction registry
 func NewTransactionRegistry() *TransactionRegistry {
 	reg := &TransactionRegistry{
-		activeTransactions:    fastmap.NewSegmentInt64Map[int64](8, 1000),
-		committedTransactions: fastmap.NewSegmentInt64Map[int64](8, 1000),
-		isolationLevel:        storage.ReadCommitted, // Default isolation level
+		activeTransactions:        fastmap.NewSegmentInt64Map[int64](8, 1000),
+		committedTransactions:     fastmap.NewSegmentInt64Map[int64](8, 1000),
+		transactionIsolationLevel: fastmap.NewInt64Map[storage.IsolationLevel](10),
 	}
 	reg.accepting.Store(true) // Start accepting transactions by default
 	return reg
 }
 
-// SetIsolationLevel sets the isolation level for this registry
-func (r *TransactionRegistry) SetIsolationLevel(level storage.IsolationLevel) {
-	r.isolationLevel = level
+// SetTransactionIsolationLevel sets the isolation level for new transactions
+func (r *TransactionRegistry) SetTransactionIsolationLevel(txnID int64, level storage.IsolationLevel) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Update the transaction-specific isolation level
+	r.transactionIsolationLevel.Put(txnID, level)
+}
+
+// RemoveTransactionIsolationLevel removes the isolation level for a transaction
+func (r *TransactionRegistry) RemoveTransactionIsolationLevel(txnID int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Remove the transaction-specific isolation level
+	r.transactionIsolationLevel.Del(txnID)
+}
+
+// SetGlobalIsolationLevel sets the isolation level for this registry
+func (r *TransactionRegistry) SetGlobalIsolationLevel(level storage.IsolationLevel) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.globalIsolationLevel = level
+}
+
+// GetGlobalIsolationLevel returns the current global isolation level
+func (r *TransactionRegistry) GetGlobalIsolationLevel() storage.IsolationLevel {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.globalIsolationLevel
 }
 
 // GetIsolationLevel returns the current isolation level
-func (r *TransactionRegistry) GetIsolationLevel() storage.IsolationLevel {
-	return r.isolationLevel
+func (r *TransactionRegistry) GetIsolationLevel(txnID int64) storage.IsolationLevel {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if level, ok := r.transactionIsolationLevel.Get(txnID); ok {
+		// If transaction-specific level is set, use that
+		return level
+	}
+
+	return r.globalIsolationLevel
 }
 
 // BeginTransaction starts a new transaction
@@ -69,26 +111,29 @@ func (r *TransactionRegistry) BeginTransaction() (txnID int64, beginTS int64) {
 
 	// Generate a new transaction ID atomically
 	txnID = r.nextTxnID.Add(1)
-	beginTS = time.Now().UnixNano()
+	// Use monotonic sequence instead of wall-clock time
+	beginSeq := r.nextSequence.Add(1)
 
 	// Record the transaction (thread-safe with SegmentInt64Map)
-	r.activeTransactions.Set(txnID, beginTS)
+	r.activeTransactions.Set(txnID, beginSeq)
 
-	return txnID, beginTS
+	return txnID, beginSeq
 }
 
 // CommitTransaction commits a transaction
-func (r *TransactionRegistry) CommitTransaction(txnID int64) (commitTS int64) {
-	commitTS = time.Now().UnixNano()
+func (r *TransactionRegistry) CommitTransaction(txnID int64) int64 {
+	// Use monotonic sequence instead of wall-clock time
+	// This ensures consistent ordering even with clock skew or low timer resolution
+	commitSeq := r.nextSequence.Add(1)
 
 	// First remove from active transactions to avoid deadlock
 	// when a cleanup operation is running concurrently
 	r.activeTransactions.Del(txnID)
 
-	// Then add to committed transactions
-	r.committedTransactions.Set(txnID, commitTS)
+	// Then add to committed transactions (storing the commit sequence)
+	r.committedTransactions.Set(txnID, commitSeq)
 
-	return commitTS
+	return commitSeq
 }
 
 // RecoverCommittedTransaction recreates a committed transaction during recovery
@@ -143,9 +188,21 @@ func (r *TransactionRegistry) GetCommitTimestamp(txnID int64) (int64, bool) {
 	return r.committedTransactions.Get(txnID)
 }
 
+// GetTransactionBeginTime gets the begin timestamp for a transaction
+func (r *TransactionRegistry) GetTransactionBeginSeq(txnID int64) int64 {
+	// Thread-safe get with SegmentInt64Map
+	beginSeq, exists := r.activeTransactions.Get(txnID)
+	if exists {
+		return beginSeq
+	}
+	// If not active, return 0 (transaction may have already committed/aborted)
+	return 0
+}
+
 // IsDirectlyVisible is an optimized version that only checks common cases
 // for better performance in bulk operations. It only returns true for
 // already committed transactions (in ReadCommitted mode).
+// Note: This method assumes the caller has already verified the isolation level
 func (r *TransactionRegistry) IsDirectlyVisible(versionTxnID int64) bool {
 	// Special case for recovery transactions with ID = -1
 	// These are always visible to everyone
@@ -153,16 +210,9 @@ func (r *TransactionRegistry) IsDirectlyVisible(versionTxnID int64) bool {
 		return true
 	}
 
-	// Fast path for ReadCommitted isolation level (the default)
-	// where any committed transaction is visible to all other transactions
-	if r.isolationLevel == storage.ReadCommitted {
-		// Thread-safe check with SegmentInt64Map
-		// This is a hot path that benefits from being as fast as possible
-		return r.committedTransactions.Has(versionTxnID)
-	}
-
-	// For other isolation levels, we need full visibility check
-	return false
+	// In READ COMMITTED mode, only committed transactions are visible
+	// This is a hot path that benefits from being as fast as possible
+	return r.committedTransactions.Has(versionTxnID)
 }
 
 // IsVisible determines if a row version is visible to a transaction
@@ -180,8 +230,7 @@ func (r *TransactionRegistry) IsVisible(versionTxnID int64, viewerTxnID int64) b
 		return true
 	}
 
-	// Fast path for common READ COMMITTED level (most databases default to this)
-	if r.isolationLevel == storage.ReadCommitted {
+	if r.GetIsolationLevel(viewerTxnID) == storage.ReadCommitted {
 		// In READ COMMITTED, only committed transactions are visible
 		// This delegation is inlinable and very efficient
 		return r.IsDirectlyVisible(versionTxnID)
@@ -224,7 +273,9 @@ func (r *TransactionRegistry) IsVisible(versionTxnID int64, viewerTxnID int64) b
 func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 	// In READ COMMITTED mode, we cannot clean up committed transactions
 	// because IsDirectlyVisible checks if the transaction exists in committedTransactions
-	if r.isolationLevel == storage.ReadCommitted {
+	isolationLevel := r.GetGlobalIsolationLevel() // Retrieve global isolation level explicitly
+
+	if isolationLevel == storage.ReadCommitted {
 		return 0
 	}
 
@@ -237,7 +288,7 @@ func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 
 	// If we're in snapshot isolation mode, we need to preserve transactions
 	// that might still be visible to active transactions
-	if r.isolationLevel == storage.SnapshotIsolation {
+	if isolationLevel == storage.SnapshotIsolation {
 		activeSet = make(map[int64]struct{})
 
 		// Collect all active transaction IDs into our map
@@ -269,7 +320,7 @@ func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 		}
 
 		// Skip transactions that are still active
-		if r.isolationLevel == storage.SnapshotIsolation {
+		if isolationLevel == storage.SnapshotIsolation {
 			if _, isActive := activeSet[txnID]; isActive {
 				return true
 			}

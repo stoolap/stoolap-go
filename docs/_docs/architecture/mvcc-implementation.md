@@ -12,256 +12,259 @@ This document provides a detailed explanation of Stoolap's Multi-Version Concurr
 
 Multi-Version Concurrency Control (MVCC) is a concurrency control method used by Stoolap to provide transaction isolation. The key principles are:
 
-1. Create a new version of data items for each update
-2. Maintain multiple versions of data concurrently
+1. Maintain the latest committed version of each row (single-version design)
+2. Track deletion status with transaction IDs for proper visibility
 3. Each transaction has a consistent view based on visibility rules
 4. Reads never block writes, and writes never block reads
-5. Implement optimistic concurrency control for conflict detection
+5. Implement optimistic concurrency control for conflict detection in SNAPSHOT isolation
+
+## Design Philosophy
+
+Stoolap implements a **single-version MVCC** design, which differs from traditional multi-version systems:
+
+- **Single Version Per Row**: Only the latest committed version is kept in memory
+- **Deletion Tracking**: Deleted rows are marked with `DeletedAtTxnID` rather than removed
+- **Transaction ID Preservation**: Updates preserve the original creator's transaction ID
+- **Memory Efficiency**: Reduced memory footprint compared to full multi-version systems
+- **Simplified Garbage Collection**: Deleted rows can be cleaned up after visibility expires
 
 ## Core Components
 
-Stoolap's MVCC implementation consists of these key components:
+### Transaction Registry
 
-### Transaction Manager
-
-- Manages transaction lifecycle (begin, commit, rollback)
-- Assigns unique transaction IDs
-- Tracks transaction state (active, committed, aborted)
-- Implements isolation levels
-- Resolves conflicts
+- Manages transaction lifecycle and state tracking
+- Assigns unique transaction IDs using atomic counters
+- Tracks active and committed transactions with monotonic sequences
+- Supports per-transaction isolation levels without race conditions
+- Implements visibility rules for both READ COMMITTED and SNAPSHOT isolation
 
 ### Version Store
 
-- Maintains multiple versions of each row
-- Associates versions with transaction IDs
-- Tracks creation and deletion transaction IDs
-- Implements garbage collection of obsolete versions
-- Optimizes storage of versions
+- Maintains single latest version of each row
+- Tracks both creation (`TxnID`) and deletion (`DeletedAtTxnID`) transaction IDs
+- Implements efficient concurrent access using segment maps
+- Manages columnar and bitmap indexes
+- Provides visibility-aware iteration and retrieval
 
-### Visibility Layer
+### Row Version Structure
 
-- Implements rules to determine which versions are visible to each transaction
-- Based on transaction ID, timestamp, and isolation level
-- Ensures consistent views of the database
-- Prevents anomalies like dirty reads, non-repeatable reads, and phantom reads
-
-## Version Tracking
-
-### Row Versioning
-
-Each row in Stoolap can have multiple versions, with each version containing:
-
-- **CreatedTxnID** - The transaction ID that created this version
-- **DeletedTxnID** - The transaction ID that deleted this version (if any)
-- **Column Values** - The actual data for this version
-
-### Version Chain
-
-Versions of a row form a chain:
-
-1. New versions are created when rows are updated or deleted
-2. Each version points to its predecessor
-3. The chain represents the complete history of a row
-4. Obsolete versions are eventually garbage collected
+```go
+type RowVersion struct {
+    TxnID          int64       // Transaction that created this version
+    DeletedAtTxnID int64       // Transaction that deleted this version (0 if not deleted)
+    Data           storage.Row // Complete row data
+    RowID          int64       // Row identifier
+    CreateTime     int64       // Timestamp when created
+}
+```
 
 ## Transaction IDs and Timestamps
 
-Stoolap uses a sophisticated transaction ID and timestamp system:
+Stoolap uses monotonic sequences instead of wall-clock timestamps to avoid platform-specific timing issues:
 
-- **TxnID** - Unique identifier for each transaction
-- **ReadTimestamp** - Timestamp when the transaction started
-- **CommitTimestamp** - Timestamp when the transaction committed
+- **Transaction ID**: Unique identifier assigned atomically
+- **Begin Sequence**: Monotonic sequence when transaction starts
+- **Commit Sequence**: Monotonic sequence when transaction commits
+- **Write Sequences**: Track when rows were last modified for conflict detection
 
-These identifiers are used to implement visibility rules and ensure transaction isolation.
+This approach solves Windows' 15.6ms timer resolution issue and ensures consistent ordering.
 
 ## Isolation Levels
 
-Stoolap supports two isolation levels through its MVCC implementation:
+### READ COMMITTED (Default)
 
-### Read Committed
+- Transactions see committed changes immediately
+- No global locks for commits - high concurrency
+- Each statement sees the latest committed data
+- Suitable for most OLTP workloads
 
-- A transaction sees only committed data as of the start of each statement
-- Different statements within the same transaction may see different data
-- No dirty reads, but non-repeatable reads and phantom reads are possible
-- Implemented through per-statement visibility checks
+Implementation:
+```go
+// In READ COMMITTED, only check if transaction is committed
+func IsDirectlyVisible(versionTxnID int64) bool {
+    return r.committedTransactions.Has(versionTxnID)
+}
+```
 
-### Snapshot Isolation
+### SNAPSHOT Isolation
 
-- A transaction sees a consistent snapshot of the database as it existed at the start of the transaction
-- All statements within a transaction see the same data, regardless of concurrent commits
-- No dirty reads, non-repeatable reads, or phantom reads
-- Implemented by using the transaction's read timestamp for all visibility checks
+- Transactions see a consistent snapshot from when they started
+- Write-write conflict detection prevents lost updates
+- Serialized commits via global mutex ensure correctness
+- Lower throughput but stronger consistency guarantees
+
+Implementation:
+```go
+// In SNAPSHOT, check if version was committed before viewer began
+func IsVisible(versionTxnID, viewerTxnID int64) bool {
+    commitTS, committed := r.committedTransactions.Get(versionTxnID)
+    if !committed {
+        return false
+    }
+    viewerBeginTS := r.GetTransactionBeginSeq(viewerTxnID)
+    return commitTS <= viewerBeginTS
+}
+```
 
 ## Visibility Rules
 
-The core of the MVCC implementation is the set of visibility rules:
+### Row Visibility
 
-### Basic Rules
+A row is visible to a transaction if:
+1. The row was created by a visible transaction, AND
+2. The row was NOT deleted, OR the deletion is not visible
 
-A row version is visible to a transaction if:
+### Deletion Visibility
 
-1. It was created by the transaction itself, OR
-2. It was created by a committed transaction before the current statement/transaction started, AND
-3. It was not deleted, OR it was deleted by a transaction that had not committed when the current statement/transaction started, OR it was deleted by the current transaction
-
-### Implementation
-
-These rules are implemented in the `IsVisible` and `IsDirectlyVisible` functions:
-
+With `DeletedAtTxnID` tracking:
 ```go
-// Simplified example of visibility rules
-func IsVisible(txn *Transaction, createdTxnID, deletedTxnID TxnID) bool {
-    // Case 1: Row created by this transaction
-    if createdTxnID == txn.ID {
-        return true
-    }
-    
-    // Case 2: Row created by another transaction
-    creatorTxn := registry.GetTransaction(createdTxnID)
-    if creatorTxn == nil || creatorTxn.Status != Committed || 
-       creatorTxn.CommitTimestamp > txn.ReadTimestamp {
+// Check if row is visible considering deletion
+if versionPtr.DeletedAtTxnID != 0 {
+    // Check if deletion is visible
+    deletionVisible := registry.IsVisible(versionPtr.DeletedAtTxnID, txnID)
+    if versionPtr.DeletedAtTxnID != txnID && deletionVisible {
+        // Deletion is visible, skip this row
         return false
     }
-    
-    // Case 3: Row not deleted or deleted by uncommitted transaction
-    if deletedTxnID == InvalidTxnID {
-        return true
-    }
-    
-    // Case 4: Row deleted by this transaction
-    if deletedTxnID == txn.ID {
-        return false
-    }
-    
-    // Case 5: Row deleted by another transaction
-    deleterTxn := registry.GetTransaction(deletedTxnID)
-    return deleterTxn == nil || deleterTxn.Status != Committed || 
-           deleterTxn.CommitTimestamp > txn.ReadTimestamp
 }
+// Row is visible (not deleted or deletion not visible)
+return true
+```
+
+### Transaction-Specific Isolation
+
+Each transaction maintains its own isolation level:
+```go
+// Set isolation level for specific transaction
+registry.SetTransactionIsolationLevel(txnID, level)
+
+// Get isolation level for visibility checks
+isolationLevel := registry.GetIsolationLevel(txnID)
 ```
 
 ## Concurrency Control
 
-Stoolap uses optimistic concurrency control within its MVCC implementation:
+### SNAPSHOT Isolation Conflicts
 
-1. Transactions proceed without acquiring locks for reading
-2. Write operations create new versions without blocking readers
-3. At commit time, the system checks for conflicts
-4. If a conflict is detected, the transaction is aborted
+Write-write conflict detection during commit:
 
-### First-Committer-Wins
+```go
+// Check for conflicts before commit
+if versionStore.CheckWriteConflict(writtenRows, beginSeq) {
+    return errors.New("transaction aborted due to write-write conflict")
+}
 
-Stoolap implements the "first-committer-wins" strategy:
+// Set write sequences after successful commit
+versionStore.SetWriteSequences(writtenRows, commitSeq)
+```
 
-- If two transactions modify the same row, the first to commit succeeds
-- The second transaction will detect the conflict at commit time and abort
-- This approach minimizes blocking while ensuring data consistency
+### Commit Synchronization
 
-## Transaction Operations
+SNAPSHOT commits are serialized to prevent race conditions:
+1. Acquire global commit mutex
+2. Check for write-write conflicts
+3. Generate commit sequence
+4. Apply changes to version stores
+5. Set write sequences atomically
+6. Mark transaction as committed
+7. Release mutex
 
-### Beginning a Transaction
+## Single-Version Design Implications
 
-When a transaction begins:
+### Updates
 
-1. A unique transaction ID is assigned
-2. A read timestamp is captured
-3. The transaction is registered in the transaction manager
-4. The isolation level is set (ReadCommitted or SnapshotIsolation)
+When a row is updated:
+- The new data replaces the old data
+- The original `TxnID` is preserved (non-standard MVCC behavior)
+- Previous versions are not accessible
+- This limits true point-in-time queries
 
-### Read Operations
+### Deletions
 
-During read operations:
+When a row is deleted:
+- The row remains in the version store
+- `DeletedAtTxnID` is set to the deleting transaction's ID
+- Data is preserved for transactions that need visibility
+- Garbage collection eventually removes invisible deleted rows
 
-1. The storage engine retrieves all versions of matching rows
-2. The visibility layer filters versions based on the transaction's view
-3. Only visible versions are returned
-4. For ReadCommitted, visibility is based on the current statement time
-5. For SnapshotIsolation, visibility is based on the transaction's start time
+### Limitations
 
-### Write Operations
-
-During write operations:
-
-1. **INSERT** - A new row version is created with the current transaction ID
-2. **UPDATE** - A new row version is created, and the old version is marked as deleted
-3. **DELETE** - The row version is marked as deleted by the current transaction
-4. All changes are only visible to the current transaction until commit
-
-### Committing a Transaction
-
-When a transaction commits:
-
-1. Conflict detection is performed
-2. If conflicts are found, the transaction is aborted
-3. If no conflicts, a commit timestamp is assigned
-4. The transaction state is changed to Committed
-5. Changes become visible to other transactions based on their isolation level
-
-### Rolling Back a Transaction
-
-When a transaction is rolled back:
-
-1. All changes made by the transaction are discarded
-2. The transaction state is changed to Aborted
-3. Resources associated with the transaction are released
-
-## Garbage Collection
-
-To prevent unbounded growth of version chains:
-
-1. Obsolete versions are identified (no active transaction can see them)
-2. These versions are removed during garbage collection
-3. Garbage collection runs periodically or when certain thresholds are reached
-4. The oldest active transaction determines which versions can be safely removed
-
-## Snapshot Management
-
-For persistent storage, Stoolap manages consistent snapshots:
-
-1. Snapshots represent a point-in-time state of the database
-2. Each snapshot is consistent across all tables
-3. Snapshots include only committed transactions
-4. Recovery uses snapshots and WAL to rebuild the database state
-
-## Implementation Details
-
-Stoolap's MVCC is implemented in the following key components:
-
-- **mvcc.go** - Core MVCC functionality and timestamp generation
-- **transaction.go** - Transaction implementation
-- **version_store.go** - Version storage and management
-- **registry.go** - Transaction registry and visibility rules
-- **table.go** - Table implementation with MVCC support
-- **scanner.go** - Data scanning with visibility filtering
+1. **No Historical Versions**: Cannot query past states beyond current snapshot
+2. **Update Visibility**: Updates immediately replace data for all future viewers
+3. **No Savepoints**: Transaction savepoints not supported
+4. **Limited Isolation Levels**: Only READ COMMITTED and SNAPSHOT
 
 ## Performance Optimizations
 
-Several optimizations improve MVCC performance:
+### Lock-Free Data Structures
 
-### Fast-Path Operations
+- `SegmentInt64Map`: High-performance concurrent maps
+- Atomic operations for counters and flags
+- Minimal mutex usage in hot paths
 
-- Single-transaction operations take a faster path
-- Read-only transactions avoid certain overhead
-- Common patterns are recognized and optimized
+### Object Pooling
 
-### Efficient Version Storage
+- Transaction objects
+- Table objects  
+- Version maps
+- Reduces GC pressure in high-throughput scenarios
 
-- Versions are stored in a way that optimizes memory usage
-- Column-oriented storage works well with MVCC
-- Segment-based organization improves concurrency
+### Optimized Visibility Checks
 
-### Visibility Filtering
+- Fast path for own-transaction visibility
+- Direct visibility check for READ COMMITTED
+- Batch processing for bulk operations
 
-- Batch filtering of versions improves performance
-- Early pruning eliminates unnecessary version checks
-- Index-based filtering accelerates visibility determination
+### Memory Management
+
+- Single version reduces memory footprint
+- Efficient row representation
+- Periodic cleanup of deleted rows
+- Cold data eviction to disk
+
+## Garbage Collection
+
+Deleted rows are cleaned up based on:
+1. Retention period (age-based)
+2. Transaction visibility (no active transaction can see them)
+3. Safety checks to prevent removing visible data
+
+```go
+func canSafelyRemove(version *RowVersion) bool {
+    // Check if any active transaction can see this deleted row
+    for _, txnID := range activeTransactions {
+        if registry.IsVisible(version.TxnID, txnID) {
+            if !registry.IsVisible(version.DeletedAtTxnID, txnID) {
+                // Row still visible to this transaction
+                return false
+            }
+        }
+    }
+    return true
+}
+```
+
+## Key Implementation Files
+
+- **registry.go**: Transaction registry and visibility rules
+- **version_store.go**: Row version storage and management
+- **transaction.go**: Transaction implementation and conflict detection
+- **engine.go**: MVCC engine coordinating all components
+- **table.go**: Table operations with MVCC support
 
 ## Best Practices
 
-To get the most out of Stoolap's MVCC implementation:
+1. **Choose Appropriate Isolation**: Use READ COMMITTED unless you need snapshot consistency
+2. **Keep Transactions Short**: Long transactions delay garbage collection
+3. **Handle Conflicts**: Implement retry logic for SNAPSHOT conflicts
+4. **Monitor Deleted Rows**: Ensure garbage collection keeps up with deletions
+5. **Batch Operations**: Group related changes in single transactions
 
-1. **Keep transactions short** - Long-running transactions increase version accumulation
-2. **Choose appropriate isolation levels** - Use the minimum required isolation
-3. **Consider workload patterns** - Read-heavy workloads benefit most from MVCC
-4. **Batch related operations** - Group related changes in a single transaction
-5. **Handle conflicts appropriately** - Implement retry logic for conflicting transactions
+## Future Improvements
+
+Potential enhancements to the current design:
+1. **Multi-Version Storage**: Keep multiple versions for better SNAPSHOT performance
+2. **Row-Level Locking**: Replace global mutex with fine-grained locks
+3. **Additional Isolation Levels**: REPEATABLE READ, SERIALIZABLE
+4. **Savepoint Support**: Transaction savepoints for partial rollbacks
+5. **Historical Queries**: Time-travel queries with version retention
