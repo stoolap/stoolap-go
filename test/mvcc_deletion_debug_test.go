@@ -68,7 +68,7 @@ func TestMVCCDeletionDebug(t *testing.T) {
 		t.Fatalf("Failed to begin TX1: %v", err)
 	}
 	t.Logf("TX1 (inserter) ID: %d", tx1.ID())
-	
+
 	table1, err := tx1.GetTable("test_table")
 	if err != nil {
 		t.Fatalf("Failed to get table: %v", err)
@@ -102,7 +102,7 @@ func TestMVCCDeletionDebug(t *testing.T) {
 		t.Fatalf("Failed to begin TX2: %v", err)
 	}
 	t.Logf("TX2 (reader) ID: %d", tx2.ID())
-	
+
 	table2, err := tx2.GetTable("test_table")
 	if err != nil {
 		t.Fatalf("Failed to get table: %v", err)
@@ -130,7 +130,7 @@ func TestMVCCDeletionDebug(t *testing.T) {
 		t.Fatalf("Failed to begin TX3: %v", err)
 	}
 	t.Logf("TX3 (deleter) ID: %d", tx3.ID())
-	
+
 	table3, err := tx3.GetTable("test_table")
 	if err != nil {
 		t.Fatalf("Failed to get table: %v", err)
@@ -145,7 +145,7 @@ func TestMVCCDeletionDebug(t *testing.T) {
 	// Get schema and prepare expression
 	tableSchema := table3.Schema()
 	preparedDeleteExpr := deleteExpr.PrepareForSchema(tableSchema)
-	
+
 	deleted, err := table3.Delete(preparedDeleteExpr)
 	if err != nil {
 		t.Fatalf("Failed to delete: %v", err)
@@ -185,7 +185,7 @@ func TestMVCCDeletionDebug(t *testing.T) {
 	)
 	tableSchema2 := table2.Schema()
 	preparedScanExpr := scanExpr.PrepareForSchema(tableSchema2)
-	
+
 	rows2Specific, err := table2.Scan(nil, preparedScanExpr)
 	if err != nil {
 		t.Fatalf("Failed to scan for specific row: %v", err)
@@ -212,7 +212,7 @@ func TestMVCCDeletionDebug(t *testing.T) {
 		t.Fatalf("Failed to begin TX4: %v", err)
 	}
 	t.Logf("TX4 (new reader) ID: %d", tx4.ID())
-	
+
 	table4, err := tx4.GetTable("test_table")
 	if err != nil {
 		t.Fatalf("Failed to get table: %v", err)

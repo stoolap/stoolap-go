@@ -72,12 +72,20 @@ func (r *TransactionRegistry) RemoveTransactionIsolationLevel(txnID int64) {
 	r.transactionIsolationLevel.Del(txnID)
 }
 
-// SetIsolationLevel sets the isolation level for this registry
-func (r *TransactionRegistry) SetIsolationLevel(level storage.IsolationLevel) {
+// SetGlobalIsolationLevel sets the isolation level for this registry
+func (r *TransactionRegistry) SetGlobalIsolationLevel(level storage.IsolationLevel) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.globalIsolationLevel = level
+}
+
+// GetGlobalIsolationLevel returns the current global isolation level
+func (r *TransactionRegistry) GetGlobalIsolationLevel() storage.IsolationLevel {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.globalIsolationLevel
 }
 
 // GetIsolationLevel returns the current isolation level
@@ -269,7 +277,7 @@ func (r *TransactionRegistry) IsVisible(versionTxnID int64, viewerTxnID int64) b
 func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 	// In READ COMMITTED mode, we cannot clean up committed transactions
 	// because IsDirectlyVisible checks if the transaction exists in committedTransactions
-	isolationLevel := r.GetIsolationLevel(0) // Use 0 as a dummy txnID to get global isolation level
+	isolationLevel := r.GetGlobalIsolationLevel() // Use 0 as a dummy txnID to get global isolation level
 
 	if isolationLevel == storage.ReadCommitted {
 		return 0

@@ -115,7 +115,7 @@ func TestSimpleDeletionVisibility(t *testing.T) {
 			t.Fatalf("Failed to begin tx1: %v", err)
 		}
 		defer tx1.Rollback()
-		
+
 		// Get transaction ID for debugging
 		var tx1ID int
 		err = tx1.QueryRow("SELECT 1").Scan(&tx1ID) // This forces the transaction to start
@@ -157,7 +157,7 @@ func TestSimpleDeletionVisibility(t *testing.T) {
 			t.Fatalf("Failed to count after: %v", err)
 		}
 		t.Logf("T1: After deletion, sees %d rows", countAfter)
-		
+
 		// Also check which rows are visible
 		rows, err := tx1.Query("SELECT id FROM test_snap ORDER BY id")
 		if err != nil {
@@ -181,7 +181,7 @@ func TestSimpleDeletionVisibility(t *testing.T) {
 		err = tx1.QueryRow("SELECT value FROM test_snap WHERE id = 2").Scan(&value)
 		if err == sql.ErrNoRows {
 			t.Error("SNAPSHOT: T1 should still see the deleted row with id=2")
-			
+
 			// Let's also try without using the primary key
 			var count int
 			err2 := tx1.QueryRow("SELECT COUNT(*) FROM test_snap WHERE value = 'two'").Scan(&count)
@@ -189,7 +189,7 @@ func TestSimpleDeletionVisibility(t *testing.T) {
 				t.Fatalf("Failed to count by value: %v", err2)
 			}
 			t.Logf("T1: COUNT(*) WHERE value='two' returns %d", count)
-			
+
 			// Try different queries to understand the issue
 			rows2, err2 := tx1.Query("SELECT id, value FROM test_snap WHERE id >= 2 AND id <= 2")
 			if err2 != nil {

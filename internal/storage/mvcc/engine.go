@@ -328,7 +328,9 @@ func (e *MVCCEngine) BeginTx(ctx context.Context, level sql.IsolationLevel) (sto
 		return nil, errors.New("transaction registry is not accepting new transactions")
 	}
 
-	e.registry.SetTransactionIsolationLevel(txnID, specificIsolationLevel)
+	if e.registry.GetGlobalIsolationLevel() != specificIsolationLevel {
+		e.registry.SetTransactionIsolationLevel(txnID, specificIsolationLevel)
+	}
 
 	// Get a tables map from the pool to reduce allocations
 	tablesMap := tablesMapPool.Get().(map[string]*MVCCTable)
@@ -596,7 +598,7 @@ func (e *MVCCEngine) GetIsolationLevel() storage.IsolationLevel {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	return e.registry.GetIsolationLevel(0)
+	return e.registry.GetGlobalIsolationLevel()
 }
 
 // SetIsolationLevel sets the isolation level for all transactions in this engine
@@ -612,7 +614,7 @@ func (e *MVCCEngine) SetIsolationLevel(level storage.IsolationLevel) error {
 		return errors.New("invalid isolation level")
 	}
 
-	e.registry.SetIsolationLevel(level)
+	e.registry.SetGlobalIsolationLevel(level)
 
 	return nil
 }

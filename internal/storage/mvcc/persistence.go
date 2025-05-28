@@ -1123,23 +1123,23 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 		}
 
 		vs.AddVersion(entry.RowID, RowVersion{
-			TxnID:         entry.TxnID,
+			TxnID:          entry.TxnID,
 			DeletedAtTxnID: 0, // Not deleted
-			Data:          row,
-			RowID:         entry.RowID,
-			CreateTime:    entry.Timestamp,
+			Data:           row,
+			RowID:          entry.RowID,
+			CreateTime:     entry.Timestamp,
 		})
 
 	case WALDelete:
 		// For WAL delete, we should ideally have the row data, but if not available, use nil
 		row, _ := deserializeRow(entry.Data) // Ignore error, use nil if deserialization fails
-		
+
 		vs.AddVersion(entry.RowID, RowVersion{
-			TxnID:         entry.TxnID,
+			TxnID:          entry.TxnID,
 			DeletedAtTxnID: entry.TxnID, // Deleted by this transaction
-			Data:          row,
-			RowID:         entry.RowID,
-			CreateTime:    entry.Timestamp,
+			Data:           row,
+			RowID:          entry.RowID,
+			CreateTime:     entry.Timestamp,
 		})
 	}
 

@@ -1455,7 +1455,7 @@ func (mt *MVCCTable) Scan(columnIndices []int, where storage.Expression) (storag
 				// Found in local versions
 				return newSingleRowScanner(row, schema, columnIndices), nil
 			}
-			
+
 			// Not in local versions, check global version store
 			version, exists := mt.versionStore.GetVisibleVersion(pkInfo.ID, mt.txnID)
 			if !exists {
