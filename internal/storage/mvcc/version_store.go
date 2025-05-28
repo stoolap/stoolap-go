@@ -501,7 +501,7 @@ func (vs *VersionStore) GetAllVisibleVersions(txnID int64) *fastmap.Int64Map[*Ro
 
 	result := GetVisibleVersionMap()
 
-	// DEBUG: Log which isolation level we're using
+	// Get the isolation level for this transaction
 	isolationLevel := vs.engine.registry.GetIsolationLevel(txnID)
 
 	// For bulk operations in READ COMMITTED, optimize the common case

@@ -202,6 +202,7 @@ func (r *TransactionRegistry) GetTransactionBeginSeq(txnID int64) int64 {
 // IsDirectlyVisible is an optimized version that only checks common cases
 // for better performance in bulk operations. It only returns true for
 // already committed transactions (in ReadCommitted mode).
+// Note: This method assumes the caller has already verified the isolation level
 func (r *TransactionRegistry) IsDirectlyVisible(versionTxnID int64) bool {
 	// Special case for recovery transactions with ID = -1
 	// These are always visible to everyone
@@ -209,14 +210,9 @@ func (r *TransactionRegistry) IsDirectlyVisible(versionTxnID int64) bool {
 		return true
 	}
 
-	if r.GetIsolationLevel(versionTxnID) == storage.ReadCommitted {
-		// Thread-safe check with SegmentInt64Map
-		// This is a hot path that benefits from being as fast as possible
-		return r.committedTransactions.Has(versionTxnID)
-	}
-
-	// For other isolation levels, we need full visibility check
-	return false
+	// In READ COMMITTED mode, only committed transactions are visible
+	// This is a hot path that benefits from being as fast as possible
+	return r.committedTransactions.Has(versionTxnID)
 }
 
 // IsVisible determines if a row version is visible to a transaction
@@ -277,7 +273,7 @@ func (r *TransactionRegistry) IsVisible(versionTxnID int64, viewerTxnID int64) b
 func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 	// In READ COMMITTED mode, we cannot clean up committed transactions
 	// because IsDirectlyVisible checks if the transaction exists in committedTransactions
-	isolationLevel := r.GetGlobalIsolationLevel() // Use 0 as a dummy txnID to get global isolation level
+	isolationLevel := r.GetGlobalIsolationLevel() // Retrieve global isolation level explicitly
 
 	if isolationLevel == storage.ReadCommitted {
 		return 0
