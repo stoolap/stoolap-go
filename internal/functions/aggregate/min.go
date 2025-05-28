@@ -160,9 +160,9 @@ func isLessThan(a, b any) bool {
 
 // compareNumerics compares two numeric values with proper precision handling
 func compareNumerics(a, b any) (int, bool) {
-	switch any(a).(type) {
+	switch a.(type) {
 	case int, int8, int16, int32, int64, Int64Convertible:
-		switch any(b).(type) {
+		switch b.(type) {
 		case int, int8, int16, int32, int64, Int64Convertible:
 			if a, ok1 := toInt64(a); ok1 {
 				if b, ok2 := toInt64(b); ok2 {
@@ -257,7 +257,7 @@ func toInt64(v any) (int64, bool) {
 }
 
 func toUint64(v any) (uint64, bool) {
-	switch x := any(v).(type) {
+	switch x := v.(type) {
 	case uint:
 		return uint64(x), true
 	case uint8:
