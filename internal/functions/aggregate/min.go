@@ -113,7 +113,7 @@ func init() {
 }
 
 // isLessThan compares two values and returns true if a < b
-func isLessThan(a, b interface{}) bool {
+func isLessThan(a, b any) bool {
 	// Handle nil cases
 	if a == nil || b == nil {
 		return a == nil && b != nil
@@ -159,7 +159,7 @@ func isLessThan(a, b interface{}) bool {
 }
 
 // compareNumerics compares two numeric values with proper precision handling
-func compareNumerics(a, b interface{}) (int, bool) {
+func compareNumerics(a, b any) (int, bool) {
 	switch any(a).(type) {
 	case int, int8, int16, int32, int64, Int64Convertible:
 		switch any(b).(type) {
@@ -183,7 +183,7 @@ func compareNumerics(a, b interface{}) (int, bool) {
 			}
 		}
 	case uint, uint8, uint16, uint32, uint64:
-		switch any(b).(type) {
+		switch b.(type) {
 		case int, int8, int16, int32, int64, Int64Convertible:
 			if a, ok1 := toUint64(a); ok1 {
 				if b, ok2 := toInt64(b); ok2 {
@@ -211,7 +211,7 @@ func compareNumerics(a, b interface{}) (int, bool) {
 			}
 		}
 	case float32, float64, Float64Convertible:
-		switch any(b).(type) {
+		switch b.(type) {
 		case int, int8, int16, int32, int64, Int64Convertible:
 			if a, ok1 := toFloat64(a); ok1 {
 				if b, ok2 := toInt64(b); ok2 {
@@ -236,8 +236,8 @@ func compareNumerics(a, b interface{}) (int, bool) {
 	return 0, false
 }
 
-func toInt64(v interface{}) (int64, bool) {
-	switch x := any(v).(type) {
+func toInt64(v any) (int64, bool) {
+	switch x := v.(type) {
 	case int:
 		return int64(x), true
 	case int8:
@@ -256,7 +256,7 @@ func toInt64(v interface{}) (int64, bool) {
 	return 0, false
 }
 
-func toUint64(v interface{}) (uint64, bool) {
+func toUint64(v any) (uint64, bool) {
 	switch x := any(v).(type) {
 	case uint:
 		return uint64(x), true
@@ -273,7 +273,7 @@ func toUint64(v interface{}) (uint64, bool) {
 }
 
 // toFloat64 converts a value to float64
-func toFloat64(value interface{}) (float64, bool) {
+func toFloat64(value any) (float64, bool) {
 	// Handle common types directly without reflection first
 	switch v := value.(type) {
 	case float32:
@@ -382,7 +382,7 @@ func typeNameOf(v interface{}) string {
 }
 
 // getDataType determines the data type of a value
-func getDataType(value interface{}) funcregistry.DataType {
+func getDataType(value any) funcregistry.DataType {
 	v := reflect.ValueOf(value)
 
 	switch v.Kind() {

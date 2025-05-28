@@ -61,7 +61,7 @@ func (f *SumFunction) Register(registry funcregistry.Registry) {
 }
 
 // Accumulate adds a value to the SUM calculation
-func (f *SumFunction) Accumulate(value interface{}, distinct bool) {
+func (f *SumFunction) Accumulate(value any, distinct bool) {
 	f.distinct = distinct
 
 	// Handle NULL values (SUM ignores NULLs)
@@ -154,7 +154,7 @@ func (f *SumFunction) Accumulate(value interface{}, distinct bool) {
 }
 
 // Result returns the final result of the SUM calculation
-func (f *SumFunction) Result() interface{} {
+func (f *SumFunction) Result() any {
 	// Return int64 for integer inputs, float64 for floating point inputs
 	if f.initialized && f.allIntegers {
 		return f.intSum

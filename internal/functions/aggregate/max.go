@@ -110,7 +110,7 @@ func init() {
 }
 
 // isEqual compares two values for equality
-func isEqual(a, b interface{}) bool {
+func isEqual(a, b any) bool {
 	// Handle nil cases
 	if a == nil && b == nil {
 		return true

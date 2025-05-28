@@ -57,7 +57,7 @@ func (f *AvgFunction) Register(registry funcregistry.Registry) {
 }
 
 // Accumulate adds a value to the AVG calculation
-func (f *AvgFunction) Accumulate(value interface{}, distinct bool) {
+func (f *AvgFunction) Accumulate(value any, distinct bool) {
 	f.distinct = distinct
 
 	// Handle NULL values (AVG ignores NULLs)
@@ -109,7 +109,7 @@ func (f *AvgFunction) Accumulate(value interface{}, distinct bool) {
 }
 
 // Result returns the final result of the AVG calculation
-func (f *AvgFunction) Result() interface{} {
+func (f *AvgFunction) Result() any {
 	if f.count == 0 {
 		return nil // Return NULL for empty sets
 	}
