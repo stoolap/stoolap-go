@@ -16,8 +16,6 @@ limitations under the License.
 package aggregate
 
 import (
-	"fmt"
-
 	"github.com/stoolap/stoolap/internal/functions/contract"
 	"github.com/stoolap/stoolap/internal/functions/registry"
 	"github.com/stoolap/stoolap/internal/parser/funcregistry"
@@ -25,12 +23,10 @@ import (
 
 // SumFunction implements the SUM aggregate function
 type SumFunction struct {
-	sum         float64
+	sum         any
 	distinct    bool
-	values      map[float64]struct{} // used for DISTINCT
-	allIntegers bool                 // track if all inputs are integers
-	initialized bool                 // track if we've seen any values
-	intSum      int64                // separate sum for integer values
+	values      map[valuePair]struct{} // used for DISTINCT
+	initialized bool                   // track if we've seen any values
 }
 
 // Name returns the name of the function
@@ -69,88 +65,90 @@ func (f *SumFunction) Accumulate(value any, distinct bool) {
 		return
 	}
 
-	// First try direct type conversion for performance
-	var numericValue float64
-	var isInteger bool
-	var intValue int64
-	var err error
-
-	// Handle direct numeric types
+	var ok bool
 	switch v := value.(type) {
-	case float64:
-		numericValue = v
-		isInteger = false
-	case float32:
-		numericValue = float64(v)
-		isInteger = false
-	case int:
-		intValue = int64(v)
-		numericValue = float64(v)
-		isInteger = true
-	case int64:
-		intValue = v
-		numericValue = float64(v)
-		isInteger = true
-	case int32:
-		intValue = int64(v)
-		numericValue = float64(v)
-		isInteger = true
-	case Int64Convertible:
-		if i64, ok := v.AsInt64(); ok {
-			intValue = i64
-			numericValue = float64(i64)
-			isInteger = true
-			err = nil
-		} else {
-			err = fmt.Errorf("AsInt64 method failed")
-		}
-	case Float64Convertible:
-		if f64, ok := v.AsFloat64(); ok {
-			numericValue = f64
-			isInteger = false
-			err = nil
-		} else {
-			err = fmt.Errorf("AsFloat64 method failed")
-		}
+	case int, int8, int16, int32, int64, Int64Convertible:
+		value, ok = toInt64(v)
+	case uint, uint8, uint16, uint32, uint64:
+		value, ok = toUint64(v)
+	case float32, float64, Float64Convertible:
+		value, ok = toFloat64(v)
+	default:
+		return
 	}
 
-	if err != nil {
-		// Skip non-numeric values
+	if !ok {
+		// If we can't convert to a numeric type, we ignore this value
 		return
 	}
 
 	// Initialize tracking for first value
 	if !f.initialized {
 		f.initialized = true
-		f.allIntegers = isInteger
-	} else {
-		// If we see a non-integer value, update the tracking
-		if !isInteger {
-			f.allIntegers = false
-		}
 	}
 
 	// Handle DISTINCT case
 	if distinct {
-		if f.values == nil {
-			f.values = make(map[float64]struct{})
-		}
-
-		// Only add values we haven't seen before
-		if _, exists := f.values[numericValue]; !exists {
-			f.values[numericValue] = struct{}{}
-			f.sum += numericValue
-			if isInteger {
-				f.intSum += intValue
-			}
-		}
-	} else {
-		// Regular SUM
-		f.sum += numericValue
-		if isInteger {
-			f.intSum += intValue
+		if isDistinct := f.isDistinct(value); !isDistinct {
+			// If the value is not distinct, we skip accumulating it
+			return
 		}
 	}
+
+	switch sum := f.sum.(type) {
+	case int64:
+		switch val := value.(type) {
+		case int64:
+			f.sum = sum + val
+		case uint64:
+			f.sum = sum + int64(val)
+		case float64:
+			f.sum = float64(sum) + val
+		}
+	case float64:
+		switch val := value.(type) {
+		case int64:
+			f.sum = sum + float64(val)
+		case uint64:
+			f.sum = sum + float64(val)
+		case float64:
+			f.sum = sum + val
+		}
+	}
+}
+
+type valuePair struct {
+	intEq   int64
+	floatEq float64
+}
+
+func (f *SumFunction) isDistinct(value any) bool {
+	if f.values == nil {
+		f.values = make(map[valuePair]struct{})
+	}
+
+	var pair valuePair
+	switch v := value.(type) {
+	case int64:
+		pair.intEq = v
+		pair.floatEq = float64(v) // Store as float for comparison
+	case uint64:
+		pair.intEq = int64(v)     // Convert to int64 for comparison
+		pair.floatEq = float64(v) // Store as float for comparison
+	case float64:
+		pair.intEq = int64(v) // Convert to int64 for comparison
+		pair.floatEq = v      // Store as float for comparison
+	default:
+		return false
+	}
+	// Check if the value is already in the map
+	if _, ok := f.values[pair]; !ok {
+		// If not, add it to the map and accumulate the sum
+		f.values[pair] = struct{}{}
+
+		return true
+	}
+	return false
 }
 
 // Result returns the final result of the SUM calculation
@@ -160,32 +158,23 @@ func (f *SumFunction) Result() any {
 		return nil
 	}
 
-	// Return int64 for integer inputs, float64 for floating point inputs
-	if f.allIntegers {
-		return f.intSum
-	}
-
 	return f.sum
 }
 
 // Reset resets the SUM calculation
 func (f *SumFunction) Reset() {
 	f.sum = 0
-	f.intSum = 0
 	f.values = nil
 	f.distinct = false
-	f.allIntegers = true
 	f.initialized = false
 }
 
 // NewSumFunction creates a new SUM function
 func NewSumFunction() contract.AggregateFunction {
 	return &SumFunction{
-		sum:         0,
-		intSum:      0,
-		values:      make(map[float64]struct{}),
+		sum:         int64(0),
+		values:      make(map[valuePair]struct{}),
 		distinct:    false,
-		allIntegers: true, // Start assuming all integers until we see a float
 		initialized: false,
 	}
 }

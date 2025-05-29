@@ -119,19 +119,19 @@ func TestSum(t *testing.T) {
 		},
 		{
 			name:     "SUM of floating point numbers",
-			values:   []any{1.5, 2.5, 3.0},
+			values:   []any{float64(1.5), float32(2.5), float64(3.0)},
 			distinct: false,
 			expected: 7.0, // Float inputs return float64
 		},
 		{
 			name:     "SUM with NULL values - should ignore NULLs",
-			values:   []any{int64(10), nil, int64(20), nil},
+			values:   []any{uint64(10), nil, int64(20), nil},
 			distinct: false,
 			expected: int64(30), // NULL values are ignored in SUM
 		},
 		{
 			name:     "SUM DISTINCT with duplicates",
-			values:   []any{int64(5), int64(5), int64(10), int64(10)},
+			values:   []any{int8(5), int64(5), uint8(10), uint64(10)},
 			distinct: true,
 			expected: int64(15), // Only unique values are summed: 5 + 10 = 15
 		},
