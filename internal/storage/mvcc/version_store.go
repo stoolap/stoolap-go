@@ -69,16 +69,19 @@ type VersionStore struct {
 	// Hot/Cold data management
 	accessTimes *fastmap.SegmentInt64Map[int64] // Maps rowID -> last access timestamp
 
+	// Dirty write prevention: track which transaction has uncommitted changes to each row
+	uncommittedWrites *fastmap.SegmentInt64Map[int64] // Maps rowID -> txnID
 }
 
 // NewVersionStore creates a new version store
 func NewVersionStore(tableName string, engine *MVCCEngine) *VersionStore {
 	vs := &VersionStore{
-		versions:    fastmap.NewSegmentInt64Map[*RowVersion](8, 1000), // Start with reasonable capacity
-		tableName:   tableName,
-		indexes:     make(map[string]storage.Index),
-		engine:      engine,
-		accessTimes: fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize access times tracking
+		versions:          fastmap.NewSegmentInt64Map[*RowVersion](8, 1000), // Start with reasonable capacity
+		tableName:         tableName,
+		indexes:           make(map[string]storage.Index),
+		engine:            engine,
+		accessTimes:       fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize access times tracking
+		uncommittedWrites: fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize uncommitted writes tracking
 	}
 	// Initialize atomic.Bool to false (not closed)
 	vs.closed.Store(false)
@@ -757,7 +760,17 @@ func NewTransactionVersionStore(
 }
 
 // Put adds or updates a row in the transaction's local store
-func (tvs *TransactionVersionStore) Put(rowID int64, data storage.Row, isDelete bool) {
+func (tvs *TransactionVersionStore) Put(rowID int64, data storage.Row, isDelete bool) error {
+	// First check if we already have a local version of this row
+	// If we do, we've already claimed it
+	if !tvs.localVersions.Has(rowID) {
+		// This is a new update/delete - need to claim the row
+		if err := tvs.ClaimRowForUpdate(rowID); err != nil {
+			// Another transaction has uncommitted changes to this row
+			return err
+		}
+	}
+
 	// Create a row version directly
 	rv := RowVersion{
 		TxnID:          tvs.txnID,
@@ -774,35 +787,30 @@ func (tvs *TransactionVersionStore) Put(rowID int64, data storage.Row, isDelete 
 
 	// Store by value in the local versions map
 	tvs.localVersions.Put(rowID, rv)
-}
-
-// PutBatch efficiently adds or updates multiple rows with the same operation
-// This version is for when all rows have the same data/isDelete values
-func (tvs *TransactionVersionStore) PutBatch(rowIDs []int64, data storage.Row, isDelete bool) {
-	// Pre-create common field values
-	now := GetFastTimestamp()
-	deletedAtTxnID := int64(0)
-	if isDelete {
-		deletedAtTxnID = tvs.txnID
-	}
-
-	// Update for each row ID
-	for _, rowID := range rowIDs {
-		// Create a row version directly with common fields
-		rv := RowVersion{
-			TxnID:          tvs.txnID,
-			DeletedAtTxnID: deletedAtTxnID,
-			Data:           data,
-			RowID:          rowID,
-			CreateTime:     now,
-		}
-		tvs.localVersions.Put(rowID, rv)
-	}
+	return nil
 }
 
 // PutRowsBatch efficiently adds multiple rows with different data values
 // This is optimized for batch insert operations
-func (tvs *TransactionVersionStore) PutRowsBatch(rowIDs []int64, rows []storage.Row, isDelete bool) {
+func (tvs *TransactionVersionStore) PutRowsBatch(rowIDs []int64, rows []storage.Row, isDelete bool) error {
+	// First, try to claim all rows atomically
+	// We need to check/claim all rows before modifying any
+	for i, rowID := range rowIDs {
+		if !tvs.localVersions.Has(rowID) {
+			// This is a new update/delete - need to claim the row
+			if err := tvs.ClaimRowForUpdate(rowID); err != nil {
+				// Another transaction has uncommitted changes to this row
+				// Release any rows we already claimed
+				for j := 0; j < i; j++ {
+					if !tvs.localVersions.Has(rowIDs[j]) {
+						tvs.ReleaseRowClaim(rowIDs[j])
+					}
+				}
+				return err
+			}
+		}
+	}
+
 	// Get a single timestamp for all versions to ensure consistency
 	// and avoid multiple system calls
 	now := GetFastTimestamp()
@@ -823,6 +831,8 @@ func (tvs *TransactionVersionStore) PutRowsBatch(rowIDs []int64, rows []storage.
 		}
 		tvs.localVersions.Put(rowID, rv)
 	}
+
+	return nil
 }
 
 // ReleaseTransactionVersionStore returns a TransactionVersionStore to the pool
@@ -843,6 +853,9 @@ func ReleaseTransactionVersionStore(tvs *TransactionVersionStore) {
 
 // Rollback aborts the transaction and releases resources
 func (tvs *TransactionVersionStore) Rollback() {
+	// Release all claimed rows
+	tvs.ReleaseAllClaims()
+
 	// During rollback, we just need to release resources
 	// No need to merge changes to parent store as we're aborting
 	if tvs.fromPool {
@@ -997,7 +1010,7 @@ func (tvs *TransactionVersionStore) GetAllVisibleRows() *fastmap.Int64Map[storag
 }
 
 // Commit merges local changes into the parent version store
-func (tvs *TransactionVersionStore) Commit() {
+func (tvs *TransactionVersionStore) Commit() error {
 	// Add all local versions to the parent store
 	if tvs.parentStore != nil {
 		tvs.localVersions.ForEach(func(rowID int64, version RowVersion) bool {
@@ -1006,12 +1019,64 @@ func (tvs *TransactionVersionStore) Commit() {
 		})
 	}
 
+	// Release all claims after adding versions
+	// This must be done here because the table will clear the reference after commit
+	tvs.ReleaseAllClaims()
+
 	// If from pool, return it after commit
 	if tvs.fromPool {
 		ReleaseTransactionVersionStore(tvs)
 	} else {
 		// For backward compatibility with existing code
 		tvs.localVersions = nil
+	}
+
+	return nil
+}
+
+// ClaimRowForUpdate attempts to claim a row for update by this transaction
+// Returns error if another transaction has uncommitted changes to this row
+func (tvs *TransactionVersionStore) ClaimRowForUpdate(rowID int64) error {
+	// Try to claim the row atomically
+	existingTxn, inserted := tvs.parentStore.uncommittedWrites.PutIfNotExists(rowID, tvs.txnID)
+
+	if !inserted && existingTxn != tvs.txnID {
+		// Another transaction has uncommitted changes to this row
+		return fmt.Errorf("row is being modified by another transaction")
+	}
+
+	// Successfully claimed (either newly claimed or already owned by us)
+	return nil
+}
+
+// ReleaseRowClaim releases the claim on a row (used during rollback)
+func (tvs *TransactionVersionStore) ReleaseRowClaim(rowID int64) {
+	// Only release if we own it
+	if txnID, exists := tvs.parentStore.uncommittedWrites.Get(rowID); exists && txnID == tvs.txnID {
+		tvs.parentStore.uncommittedWrites.Del(rowID)
+	}
+}
+
+// ReleaseAllClaims releases all row claims for this transaction
+func (tvs *TransactionVersionStore) ReleaseAllClaims() {
+	// If we don't have a parent store, nothing to do
+	if tvs.parentStore == nil || tvs.parentStore.uncommittedWrites == nil {
+		return
+	}
+
+	// Iterate through all uncommitted writes and remove those belonging to this transaction
+	toDelete := make([]int64, 0)
+
+	tvs.parentStore.uncommittedWrites.ForEach(func(rowID, txnID int64) bool {
+		if txnID == tvs.txnID {
+			toDelete = append(toDelete, rowID)
+		}
+		return true
+	})
+
+	// Delete all claims for this transaction
+	for _, rowID := range toDelete {
+		tvs.parentStore.uncommittedWrites.Del(rowID)
 	}
 }
 

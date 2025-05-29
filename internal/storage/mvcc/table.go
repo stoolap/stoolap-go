@@ -149,7 +149,9 @@ func (mt *MVCCTable) Insert(row storage.Row) error {
 	}
 
 	// Add to transaction's local version store using the numeric row ID
-	mt.txnVersions.Put(rowID, row, false)
+	if err := mt.txnVersions.Put(rowID, row, false); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -425,8 +427,6 @@ func (mt *MVCCTable) InsertBatch(rows []storage.Row) error {
 		}
 	}
 
-	// Note: We'll update the auto-increment counter AFTER checking row existence
-
 	// Extract all row IDs first - reuse the schema we already fetched
 	rowIDs := make([]int64, len(rows))
 	for i, row := range rows {
@@ -451,7 +451,9 @@ func (mt *MVCCTable) InsertBatch(rows []storage.Row) error {
 
 	// If we got here, none of the rows exist, so insert them all
 	// Use the batch insertion method for better performance
-	mt.txnVersions.PutRowsBatch(rowIDs, rows, false)
+	if err := mt.txnVersions.PutRowsBatch(rowIDs, rows, false); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -618,7 +620,9 @@ func (mt *MVCCTable) Update(where storage.Expression, setter func(storage.Row) (
 				}
 			}
 			// Store the updated row
-			mt.txnVersions.Put(pkInfo.ID, updatedRow, false)
+			if err := mt.txnVersions.Put(pkInfo.ID, updatedRow, false); err != nil {
+				return 0, err
+			}
 
 			// Return count of 1 row updated
 			return 1, nil
@@ -684,7 +688,9 @@ func (mt *MVCCTable) Update(where storage.Expression, setter func(storage.Row) (
 					}
 
 					// Store the updated row
-					mt.txnVersions.Put(id, updatedRow, false)
+					if err := mt.txnVersions.Put(id, updatedRow, false); err != nil {
+						return 0, err
+					}
 					updateCount++
 				}
 
@@ -703,7 +709,9 @@ func (mt *MVCCTable) Update(where storage.Expression, setter func(storage.Row) (
 						}
 
 						// Store the updated row
-						mt.txnVersions.Put(rowID, updatedRow, false)
+						if err = mt.txnVersions.Put(rowID, updatedRow, false); err != nil {
+							return false
+						}
 						updateCount++
 					}
 
@@ -758,7 +766,9 @@ func (mt *MVCCTable) Update(where storage.Expression, setter func(storage.Row) (
 						}
 
 						// Store the updated row
-						mt.txnVersions.Put(rowID, updatedRow, false)
+						if err = mt.txnVersions.Put(rowID, updatedRow, false); err != nil {
+							return false
+						}
 						updateCount++
 					}
 
@@ -797,7 +807,9 @@ func (mt *MVCCTable) Update(where storage.Expression, setter func(storage.Row) (
 		}
 
 		// Store the updated row
-		mt.txnVersions.Put(rowID, updatedRow, false)
+		if err := mt.txnVersions.Put(rowID, updatedRow, false); err != nil {
+			return err
+		}
 
 		return nil
 	}, 0) // Process in batches all at once
@@ -890,7 +902,9 @@ func (mt *MVCCTable) Update(where storage.Expression, setter func(storage.Row) (
 					}
 
 					// Store the updated row
-					mt.txnVersions.Put(rowID, updatedRow, false)
+					if err = mt.txnVersions.Put(rowID, updatedRow, false); err != nil {
+						break
+					}
 					updateCount++
 				}
 			}
@@ -1087,7 +1101,9 @@ func (mt *MVCCTable) Delete(where storage.Expression) (int, error) {
 			}
 
 			// Mark the row as deleted with tombstone
-			mt.txnVersions.Put(pkInfo.ID, row, true)
+			if err := mt.txnVersions.Put(pkInfo.ID, row, true); err != nil {
+				return 0, err
+			}
 
 			// Return count of 1 row deleted
 			return 1, nil
@@ -1132,7 +1148,9 @@ func (mt *MVCCTable) Delete(where storage.Expression) (int, error) {
 					if mt.txnVersions.HasLocallySeen(id) {
 						if row, exists := mt.txnVersions.Get(id); exists && row != nil {
 							// Mark as deleted with tombstone
-							mt.txnVersions.Put(id, row, true)
+							if err := mt.txnVersions.Put(id, row, true); err != nil {
+								return deleteCount, err
+							}
 							deleteCount++
 						}
 					}
@@ -1145,7 +1163,9 @@ func (mt *MVCCTable) Delete(where storage.Expression) (int, error) {
 				globalRows.ForEach(func(rowID int64, version *RowVersion) bool {
 					if !version.IsDeleted() {
 						// Mark as deleted
-						mt.txnVersions.Put(rowID, version.Data, true)
+						if err := mt.txnVersions.Put(rowID, version.Data, true); err != nil {
+							return false
+						}
 						deleteCount++
 					}
 
@@ -1189,7 +1209,9 @@ func (mt *MVCCTable) Delete(where storage.Expression) (int, error) {
 					if mt.txnVersions.HasLocallySeen(id) {
 						if row, exists := mt.txnVersions.Get(id); exists && row != nil {
 							// Mark as deleted with tombstone
-							mt.txnVersions.Put(id, row, true)
+							if err := mt.txnVersions.Put(id, row, true); err != nil {
+								return deleteCount, err
+							}
 							deleteCount++
 						}
 					}
@@ -1201,7 +1223,9 @@ func (mt *MVCCTable) Delete(where storage.Expression) (int, error) {
 				globalRows.ForEach(func(rowID int64, version *RowVersion) bool {
 					if !version.IsDeleted() {
 						// Mark as deleted
-						mt.txnVersions.Put(rowID, version.Data, true)
+						if err := mt.txnVersions.Put(rowID, version.Data, true); err != nil {
+							return false
+						}
 						deleteCount++
 					}
 
@@ -1231,7 +1255,9 @@ func (mt *MVCCTable) Delete(where storage.Expression) (int, error) {
 	// PART 2: Process global versions with batch limiting
 	processCount, _ := mt.processGlobalVersions(filterExpr, processedKeys, func(rowID int64, row storage.Row) error {
 		// Mark as deleted in transaction's local versions
-		mt.txnVersions.Put(rowID, row, true)
+		if err := mt.txnVersions.Put(rowID, row, true); err != nil {
+			return err
+		}
 		return nil
 	}, 0) // Process in batches all at once
 
@@ -1309,7 +1335,9 @@ func (mt *MVCCTable) Delete(where storage.Expression) (int, error) {
 					row := batchRows[i]
 
 					// Mark as deleted
-					mt.txnVersions.Put(rowID, row, true)
+					if err := mt.txnVersions.Put(rowID, row, true); err != nil {
+						return deleteCount, err
+					}
 					deleteCount++
 				}
 			}
