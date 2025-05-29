@@ -33,6 +33,10 @@ type RowVersion struct {
 	Data           storage.Row // Complete row data, not just a reference
 	RowID          int64       // Row identifier (replaces string primary key)
 	CreateTime     int64       // Timestamp when this version was created
+
+	// Previous version - only kept in memory for active transactions
+	// This field is NOT persisted to disk snapshots
+	PrevVersion *RowVersion `json:"-"` // Pointer to previous version
 }
 
 func (rv *RowVersion) String() string {
@@ -65,20 +69,16 @@ type VersionStore struct {
 	// Hot/Cold data management
 	accessTimes *fastmap.SegmentInt64Map[int64] // Maps rowID -> last access timestamp
 
-	// Write-write conflict detection for SNAPSHOT isolation
-	// Maps rowID -> commit sequence when this row was last written
-	writeCommitSeqs *fastmap.SegmentInt64Map[int64]
 }
 
 // NewVersionStore creates a new version store
 func NewVersionStore(tableName string, engine *MVCCEngine) *VersionStore {
 	vs := &VersionStore{
-		versions:        fastmap.NewSegmentInt64Map[*RowVersion](8, 1000), // Start with reasonable capacity
-		tableName:       tableName,
-		indexes:         make(map[string]storage.Index),
-		engine:          engine,
-		accessTimes:     fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize access times tracking
-		writeCommitSeqs: fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize write commit sequences for conflict detection
+		versions:    fastmap.NewSegmentInt64Map[*RowVersion](8, 1000), // Start with reasonable capacity
+		tableName:   tableName,
+		indexes:     make(map[string]storage.Index),
+		engine:      engine,
+		accessTimes: fastmap.NewSegmentInt64Map[int64](8, 1000), // Initialize access times tracking
 	}
 	// Initialize atomic.Bool to false (not closed)
 	vs.closed.Store(false)
@@ -152,6 +152,7 @@ func (vs *VersionStore) AddVersion(rowID int64, version RowVersion) {
 			Data:           version.Data,
 			RowID:          version.RowID,
 			CreateTime:     version.CreateTime,
+			PrevVersion:    nil, // First version has no previous
 		}
 		vs.versions.Set(rowID, newVersion)
 
@@ -161,18 +162,31 @@ func (vs *VersionStore) AddVersion(rowID int64, version RowVersion) {
 		// Store old deleted status for index updates
 		oldIsDeleted := rv.IsDeleted()
 
-		// Create a new version to avoid data races
-		// We cannot modify rv directly as it might be accessed concurrently
-		newVersion := &RowVersion{
-			TxnID:          rv.TxnID, // Keep the original TxnID
-			DeletedAtTxnID: version.DeletedAtTxnID,
-			RowID:          version.RowID,
-			CreateTime:     version.CreateTime,
-			Data:           version.Data, // Always keep the data, even for deleted rows
+		// For updates, keep the previous version for MVCC
+		// For deletes, we still update the current version
+		if version.DeletedAtTxnID != 0 && !rv.IsDeleted() {
+			// This is a delete operation - just mark current version as deleted
+			newVersion := &RowVersion{
+				TxnID:          rv.TxnID, // Keep the original TxnID
+				DeletedAtTxnID: version.DeletedAtTxnID,
+				RowID:          version.RowID,
+				CreateTime:     rv.CreateTime,  // Keep original create time
+				Data:           rv.Data,        // Keep the data for deleted rows
+				PrevVersion:    rv.PrevVersion, // Keep existing previous version
+			}
+			vs.versions.Set(rowID, newVersion)
+		} else {
+			// This is an update operation - create new version with previous
+			newVersion := &RowVersion{
+				TxnID:          version.TxnID, // Use the new TxnID
+				DeletedAtTxnID: version.DeletedAtTxnID,
+				RowID:          version.RowID,
+				CreateTime:     version.CreateTime,
+				Data:           version.Data,
+				PrevVersion:    rv, // Link to previous version
+			}
+			vs.versions.Set(rowID, newVersion)
 		}
-
-		// Atomically replace the old version with the new one
-		vs.versions.Set(rowID, newVersion)
 
 		// Update columnar indexes
 		// First check if there are any indexes to update
@@ -231,7 +245,8 @@ func (vs *VersionStore) GetVisibleVersion(rowID int64, txnID int64) (RowVersion,
 	// Check if the row exists in memory - haxmap is concurrency-safe
 	versionPtr, exists := vs.versions.Get(rowID)
 	if exists {
-		// With a single version per row, check if that version is visible
+		// Check current version first
+		// fmt.Printf("[GetVisibleVersion] Row %d: checking version TxnID=%d for viewer TxnID=%d\n", rowID, versionPtr.TxnID, txnID)
 		if vs.engine.registry.IsVisible(versionPtr.TxnID, txnID) {
 			// Check if the row has been deleted and if the deletion is visible
 			if versionPtr.DeletedAtTxnID != 0 && vs.engine.registry.IsVisible(versionPtr.DeletedAtTxnID, txnID) {
@@ -239,10 +254,28 @@ func (vs *VersionStore) GetVisibleVersion(rowID int64, txnID int64) (RowVersion,
 				return RowVersion{}, false
 			}
 			// Return a copy of the version by value
+			// fmt.Printf("[GetVisibleVersion] Row %d: version IS visible, returning data\n", rowID)
 			return *versionPtr, true
 		}
-		// If version exists but isn't visible, return false directly
-		// We don't need to check disk because memory version is newer
+
+		// Current version not visible, check previous version if it exists
+		// fmt.Printf("[GetVisibleVersion] Row %d: current version NOT visible\n", rowID)
+		if versionPtr.PrevVersion != nil {
+			prev := versionPtr.PrevVersion
+			// fmt.Printf("[GetVisibleVersion] Row %d: checking prev version TxnID=%d\n", rowID, prev.TxnID)
+			if vs.engine.registry.IsVisible(prev.TxnID, txnID) {
+				// Check if previous version was deleted
+				if prev.DeletedAtTxnID != 0 && vs.engine.registry.IsVisible(prev.DeletedAtTxnID, txnID) {
+					// Previous version was deleted and deletion is visible
+					return RowVersion{}, false
+				}
+				// Return a copy of the previous version
+				// fmt.Printf("[GetVisibleVersion] Row %d: prev version IS visible, returning data\n", rowID)
+				return *prev, true
+			}
+		}
+
+		// Neither current nor previous version is visible
 		return RowVersion{}, false
 	}
 
@@ -309,6 +342,21 @@ func (vs *VersionStore) IterateVisibleVersions(rowIDs []int64, txnID int64,
 			if !callback(rowID, *versionPtr) {
 				// Stop iteration if callback returns false
 				return
+			}
+		} else if versionPtr.PrevVersion != nil {
+			// Current version not visible, check previous version
+			prev := versionPtr.PrevVersion
+			if vs.engine.registry.IsVisible(prev.TxnID, txnID) {
+				// Check if previous version was deleted
+				if prev.DeletedAtTxnID != 0 && vs.engine.registry.IsVisible(prev.DeletedAtTxnID, txnID) {
+					// Previous version was deleted and deletion is visible
+					continue
+				}
+				// Call the callback with the previous version
+				if !callback(rowID, *prev) {
+					// Stop iteration if callback returns false
+					return
+				}
 			}
 		}
 	}
@@ -396,6 +444,18 @@ func (vs *VersionStore) GetVisibleVersionsByIDs(rowIDs []int64, txnID int64) *fa
 				}
 				// Add the visible version to result
 				result.Put(rowID, versionPtr)
+			} else if versionPtr.PrevVersion != nil {
+				// Current version not visible, check previous version
+				prev := versionPtr.PrevVersion
+				if vs.engine.registry.IsVisible(prev.TxnID, txnID) {
+					// Check if previous version was deleted
+					if prev.DeletedAtTxnID != 0 && vs.engine.registry.IsVisible(prev.DeletedAtTxnID, txnID) {
+						// Previous version was deleted and deletion is visible
+						continue
+					}
+					// Add the previous version to result
+					result.Put(rowID, prev)
+				}
 			}
 		}
 	}
@@ -596,6 +656,21 @@ func (vs *VersionStore) GetAllVisibleVersions(txnID int64) *fastmap.Int64Map[*Ro
 				// If deletion is NOT visible or done by current txn, include the row
 			}
 			result.Put(rowID, versionPtr)
+		} else if versionPtr.PrevVersion != nil {
+			// Current version not visible, check previous version
+			prev := versionPtr.PrevVersion
+			if vs.engine.registry.IsVisible(prev.TxnID, txnID) {
+				// Check if previous version was deleted
+				if prev.IsDeleted() {
+					deletionVisible := vs.engine.registry.IsVisible(prev.DeletedAtTxnID, txnID)
+					if prev.DeletedAtTxnID != txnID && deletionVisible {
+						// Previous version was deleted and deletion is visible
+						return true
+					}
+				}
+				// Include the previous version
+				result.Put(rowID, prev)
+			}
 		}
 
 		return true
@@ -859,6 +934,20 @@ func (tvs *TransactionVersionStore) GetAllVisibleRows() *fastmap.Int64Map[storag
 				}
 				// Add directly to result
 				result.Put(rowID, versionPtr.Data)
+			} else if versionPtr.PrevVersion != nil {
+				// Current version not visible, check previous version
+				prev := versionPtr.PrevVersion
+				if registry.IsVisible(prev.TxnID, txnID) {
+					// Check if there's a deletion we need to consider
+					if prev.IsDeleted() {
+						// If the deletion is visible, skip this row
+						if registry.IsVisible(prev.DeletedAtTxnID, txnID) {
+							return true
+						}
+					}
+					// Previous version is visible and not deleted (or deletion not visible)
+					result.Put(rowID, prev.Data)
+				}
 			}
 
 			return true
@@ -1079,6 +1168,62 @@ func (vs *VersionStore) canSafelyRemove(version *RowVersion) bool {
 	}
 
 	return true
+}
+
+// CleanupOldPreviousVersions removes previous versions that are no longer needed by any active transaction
+func (vs *VersionStore) CleanupOldPreviousVersions() int {
+	// Check if the version store is closed
+	if vs.closed.Load() {
+		return 0
+	}
+
+	cleaned := 0
+
+	// Get all active transaction IDs to check visibility
+	activeTransactions := make([]int64, 0)
+	vs.engine.registry.activeTransactions.ForEach(func(txnID int64, beginTS int64) bool {
+		activeTransactions = append(activeTransactions, txnID)
+		return true
+	})
+
+	// If no active transactions, we can clean all previous versions
+	if len(activeTransactions) == 0 {
+		vs.versions.ForEach(func(rowID int64, version *RowVersion) bool {
+			if version.PrevVersion != nil {
+				version.PrevVersion = nil
+				cleaned++
+			}
+			return true
+		})
+		return cleaned
+	}
+
+	// Check each row to see if we can discard its previous version
+	vs.versions.ForEach(func(rowID int64, version *RowVersion) bool {
+		if version.PrevVersion == nil {
+			return true // No previous version to clean
+		}
+
+		canDiscard := true
+		for _, txnID := range activeTransactions {
+			// If this transaction can see the previous version but not the current version,
+			// we need to keep the previous version
+			if vs.engine.registry.IsVisible(version.PrevVersion.TxnID, txnID) &&
+				!vs.engine.registry.IsVisible(version.TxnID, txnID) {
+				canDiscard = false
+				break
+			}
+		}
+
+		if canDiscard {
+			version.PrevVersion = nil
+			cleaned++
+		}
+
+		return true
+	})
+
+	return cleaned
 }
 
 // CleanupDeletedRows removes deleted rows that are older than the specified retention period
@@ -1462,29 +1607,6 @@ func (vs *VersionStore) RemoveIndex(indexName string) error {
 	}
 
 	return fmt.Errorf("index %s not found", indexName)
-}
-
-// SetWriteSequences sets the commit sequence for multiple rows atomically
-// This is called during transaction commit under the commit mutex
-func (vs *VersionStore) SetWriteSequences(rowIDs []int64, commitSeq int64) {
-	for _, rowID := range rowIDs {
-		vs.writeCommitSeqs.Set(rowID, commitSeq)
-	}
-}
-
-// CheckWriteConflict checks if any of the given rows have been modified after the transaction's begin timestamp
-// This is used for write-write conflict detection in SNAPSHOT isolation
-func (vs *VersionStore) CheckWriteConflict(rowIDs []int64, txnBeginSeq int64) bool {
-	// For SNAPSHOT isolation, check if any rows were written by other transactions
-	for _, rowID := range rowIDs {
-		if lastWriteSeq, exists := vs.writeCommitSeqs.Get(rowID); exists {
-			if lastWriteSeq > txnBeginSeq {
-				// This row was written after our transaction began - conflict!
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // UpdateColumnarIndexes updates all columnar indexes with a new row version

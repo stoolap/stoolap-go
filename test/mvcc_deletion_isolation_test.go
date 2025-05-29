@@ -629,7 +629,6 @@ func TestMVCCDeletionRollback(t *testing.T) {
 
 // TestMVCCDeletionWithUpdate tests deletion visibility when combined with updates
 func TestMVCCDeletionWithUpdate(t *testing.T) {
-	t.Skip("Skipping test for now, the MVCC only keep the single version of the row")
 	db, err := sql.Open("stoolap", "memory://")
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)

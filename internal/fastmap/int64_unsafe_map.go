@@ -68,9 +68,7 @@ func (m *Int64Map[V]) Has(key int64) bool {
 		return m.hasZeroKey
 	}
 
-	// Calculate primary hash and secondary hash
-	// Primary hash is the same as in the standard map
-	// Secondary hash is optimized for clustered keys
+	// Calculate primary hash
 	idx := m.primaryIndex(key)
 
 	// Direct hit check (most common case)
@@ -83,16 +81,10 @@ func (m *Int64Map[V]) Has(key int64) bool {
 		return false
 	}
 
-	// Collision: try secondary probing
-	// This is optimized for clustered keys by using a different probing sequence
-	secondary := m.secondaryIndex(key)
-	probeDistance := 1
-
-	for i := 0; i < len(m.data); i++ {
-		// For clustered keys, use quadratic probing with the secondary hash
-		// This creates less clustering than linear probing for sequential keys
-		idx = (idx + probeDistance*secondary) & m.mask
-		probeDistance++
+	// Linear probing with Robin Hood hashing
+	// This allows for efficient deletion
+	for i := 1; i < len(m.data); i++ {
+		idx = (idx + 1) & m.mask
 
 		if m.data[idx].Key == key {
 			return true
@@ -122,7 +114,7 @@ func (m *Int64Map[V]) Get(key int64) (V, bool) {
 		return zero, false
 	}
 
-	// Calculate primary and secondary indices
+	// Calculate primary index
 	idx := m.primaryIndex(key)
 
 	// Direct hit check (most common case)
@@ -136,14 +128,9 @@ func (m *Int64Map[V]) Get(key int64) (V, bool) {
 		return zero, false
 	}
 
-	// Collision: try secondary probing
-	secondary := m.secondaryIndex(key)
-	probeDistance := 1
-
-	for i := 0; i < len(m.data); i++ {
-		// Quadratic probing with secondary hash
-		idx = (idx + probeDistance*secondary) & m.mask
-		probeDistance++
+	// Linear probing
+	for i := 1; i < len(m.data); i++ {
+		idx = (idx + 1) & m.mask
 
 		if m.data[idx].Key == key {
 			return m.data[idx].Value, true
@@ -176,7 +163,7 @@ func (m *Int64Map[V]) Put(key int64, val V) {
 		m.grow()
 	}
 
-	// Calculate primary and secondary indices
+	// Calculate primary index
 	idx := m.primaryIndex(key)
 
 	// Fast path: empty slot
@@ -193,14 +180,9 @@ func (m *Int64Map[V]) Put(key int64, val V) {
 		return
 	}
 
-	// Collision: try secondary probing
-	secondary := m.secondaryIndex(key)
-	probeDistance := 1
-
-	for i := 0; i < len(m.data); i++ {
-		// Quadratic probing with secondary hash
-		idx = (idx + probeDistance*secondary) & m.mask
-		probeDistance++
+	// Linear probing
+	for i := 1; i < len(m.data); i++ {
+		idx = (idx + 1) & m.mask
 
 		if m.data[idx].Key == 0 {
 			m.data[idx].Key = key
@@ -237,7 +219,7 @@ func (m *Int64Map[V]) PutIfNotExists(key int64, val V) (V, bool) {
 		m.grow()
 	}
 
-	// Calculate primary and secondary indices
+	// Calculate primary index
 	idx := m.primaryIndex(key)
 
 	// Fast path: empty slot
@@ -253,14 +235,9 @@ func (m *Int64Map[V]) PutIfNotExists(key int64, val V) (V, bool) {
 		return m.data[idx].Value, false
 	}
 
-	// Collision: try secondary probing
-	secondary := m.secondaryIndex(key)
-	probeDistance := 1
-
-	for i := 0; i < len(m.data); i++ {
-		// Quadratic probing with secondary hash
-		idx = (idx + probeDistance*secondary) & m.mask
-		probeDistance++
+	// Linear probing
+	for i := 1; i < len(m.data); i++ {
+		idx = (idx + 1) & m.mask
 
 		if m.data[idx].Key == 0 {
 			m.data[idx].Key = key
@@ -297,20 +274,19 @@ func (m *Int64Map[V]) Del(key int64) bool {
 		return false
 	}
 
-	// Calculate primary and secondary indices
+	// Calculate primary index
 	idx := m.primaryIndex(key)
 
 	// Check if key exists at primary position
 	if m.data[idx].Key == key {
-		// Use tombstone approach for deletion
-		// This is simpler and faster for workloads with minimal deletions
+		// Mark as deleted
 		var zero V
 		m.data[idx].Key = 0
 		m.data[idx].Value = zero
 		m.size--
 
-		// Fix the deletion by re-inserting affected keys
-		m.fixChain(idx)
+		// Use backward shift deletion for linear probing
+		m.backwardShiftDelete(idx)
 		return true
 	}
 
@@ -319,22 +295,17 @@ func (m *Int64Map[V]) Del(key int64) bool {
 		return false
 	}
 
-	// Collision: try secondary probing
-	secondary := m.secondaryIndex(key)
-	probeDistance := 1
-
-	for i := 0; i < len(m.data); i++ {
-		// Quadratic probing with secondary hash
-		idx = (idx + probeDistance*secondary) & m.mask
-		probeDistance++
+	// Linear probing to find the key
+	for i := 1; i < len(m.data); i++ {
+		idx = (idx + 1) & m.mask
 
 		if m.data[idx].Key == key {
-			// Found key, mark as deleted and fix chain
+			// Found key, mark as deleted
 			var zero V
 			m.data[idx].Key = 0
 			m.data[idx].Value = zero
 			m.size--
-			m.fixChain(idx)
+			m.backwardShiftDelete(idx)
 			return true
 		}
 		if m.data[idx].Key == 0 {
@@ -447,15 +418,6 @@ func (m *Int64Map[V]) primaryIndex(key int64) int {
 	return int(h^(h>>16)) & m.mask
 }
 
-// secondaryIndex calculates a secondary index for quadratic probing
-// This helps reduce clustering for sequential or clustered keys
-func (m *Int64Map[V]) secondaryIndex(key int64) int {
-	// Secondary hash function uses a different constant multiplier
-	// This creates a different distribution pattern
-	h := key * int64(0x85EBCA77)
-	return int(h^(h>>13)) | 1 // Ensure it's odd for better distribution
-}
-
 // grow increases the size of the map and rehashes all entries
 func (m *Int64Map[V]) grow() {
 	// Use a more conservative growth factor for large maps
@@ -513,14 +475,9 @@ func (m *Int64Map[V]) grow() {
 				continue
 			}
 
-			// Collision: use quadratic probing
-			secondary := m.secondaryIndex(p.Key)
-			probeDistance := 1
-
-			for j := 0; j < len(m.data); j++ {
-				// Quadratic probe with secondary hash
-				h = (h + probeDistance*secondary) & m.mask
-				probeDistance++
+			// Collision: use linear probing
+			for j := 1; j < len(m.data); j++ {
+				h = (h + 1) & m.mask
 
 				if m.data[h].Key == 0 {
 					m.data[h].Key = p.Key
@@ -545,74 +502,56 @@ func (m *Int64Map[V]) grow() {
 	oldData = nil
 }
 
-// fixChain repairs the hash chain after deletion
-// For our clustered use case with minimal deletions, we use a simple approach:
-// 1. Collect all keys from the next segment that might be affected
-// 2. Remove them from the table
-// 3. Re-insert them
-func (m *Int64Map[V]) fixChain(emptyIdx int) {
-	// Collect potentially affected keys
-	var keysToReinsert []Pair[V]
+// backwardShiftDelete implements backward shift deletion for linear probing
+// This is efficient and maintains the invariant that all keys remain findable
+func (m *Int64Map[V]) backwardShiftDelete(deletedIdx int) {
 	var zero V
+	idx := deletedIdx
 
-	// Maximum chain distance to check
-	maxDistance := 16 // Max probe sequence length to check
+	// Shift entries back to fill the gap
+	for {
+		// Look at the next slot
+		nextIdx := (idx + 1) & m.mask
 
-	// Scan ahead for keys that might need to be repositioned
-	i := 1
-	for ; i <= maxDistance; i++ {
-		nextIdx := (emptyIdx + i) & m.mask
+		// If next slot is empty, we're done
 		if m.data[nextIdx].Key == 0 {
-			break // Found end of chain
+			break
 		}
 
-		// Check if this key would like to be earlier in the chain
-		// For a key to be potentially affected, it must have its primary
-		// position earlier than our current checking position
-		primary := m.primaryIndex(m.data[nextIdx].Key)
-		if isBetween(primary, emptyIdx, nextIdx) {
-			keysToReinsert = append(keysToReinsert, m.data[nextIdx])
-			m.data[nextIdx].Key = 0
-			m.data[nextIdx].Value = zero
-		}
-	}
+		// Get the ideal position for the key in the next slot
+		idealIdx := m.primaryIndex(m.data[nextIdx].Key)
 
-	// If we found few or no keys to reinsert, we're done
-	if len(keysToReinsert) == 0 {
-		return
-	}
+		// With linear probing, we need to check if moving this key
+		// would break the probe chain for finding it
+		// The key can be moved if there's no gap between its ideal position
+		// and the empty slot when following the linear probe sequence
 
-	// Re-insert the collected keys
-	for _, p := range keysToReinsert {
-		// Get primary index
-		idx := m.primaryIndex(p.Key)
-
-		// If the primary index is empty, use it
-		if m.data[idx].Key == 0 {
-			m.data[idx] = p
-			continue
-		}
-
-		// Otherwise, probe to find a new slot
-		secondary := m.secondaryIndex(p.Key)
-		probeDistance := 1
-
-		for j := 0; j < len(m.data); j++ {
-			idx = (idx + probeDistance*secondary) & m.mask
-			probeDistance++
-
-			if m.data[idx].Key == 0 {
-				m.data[idx] = p
+		// Simple check: can we reach the empty slot from the ideal position?
+		canReachEmpty := false
+		checkIdx := idealIdx
+		for i := 0; i < len(m.data); i++ {
+			if checkIdx == idx {
+				canReachEmpty = true
 				break
 			}
+			if m.data[checkIdx].Key == 0 {
+				// There's a gap before reaching the empty slot
+				break
+			}
+			checkIdx = (checkIdx + 1) & m.mask
+		}
+
+		if canReachEmpty {
+			// Move this entry back to fill the gap
+			m.data[idx] = m.data[nextIdx]
+			m.data[nextIdx].Key = 0
+			m.data[nextIdx].Value = zero
+			// Continue from the newly empty slot
+			idx = nextIdx
+		} else {
+			// Cannot move this key without breaking probe chains
+			// We're done
+			break
 		}
 	}
-}
-
-// isBetween checks if idx is in the range [start, end] in a circular buffer
-func isBetween(original, empty, current int) bool {
-	if empty <= current {
-		return original <= empty || original > current
-	}
-	return original <= empty && original > current
 }

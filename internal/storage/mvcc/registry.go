@@ -36,9 +36,9 @@ type TransactionRegistry struct {
 	activeTransactions        *fastmap.SegmentInt64Map[int64] // txnID -> begin sequence number
 	committedTransactions     *fastmap.SegmentInt64Map[int64] // txnID -> commit sequence number
 	globalIsolationLevel      storage.IsolationLevel
-	transactionIsolationLevel *fastmap.Int64Map[storage.IsolationLevel] // Per-transaction isolation level
-	accepting                 atomic.Bool                               // Flag to control if new transactions are accepted
-	nextSequence              atomic.Int64                              // Single monotonic sequence for both begin and commit
+	transactionIsolationLevel map[int64](storage.IsolationLevel) // Per-transaction isolation level
+	accepting                 atomic.Bool                        // Flag to control if new transactions are accepted
+	nextSequence              atomic.Int64                       // Single monotonic sequence for both begin and commit
 
 	mu sync.RWMutex // RWMutex for additional safety in some operations
 }
@@ -48,7 +48,7 @@ func NewTransactionRegistry() *TransactionRegistry {
 	reg := &TransactionRegistry{
 		activeTransactions:        fastmap.NewSegmentInt64Map[int64](8, 1000),
 		committedTransactions:     fastmap.NewSegmentInt64Map[int64](8, 1000),
-		transactionIsolationLevel: fastmap.NewInt64Map[storage.IsolationLevel](10),
+		transactionIsolationLevel: make(map[int64]storage.IsolationLevel, 100), // Preallocate for 100 transactions
 	}
 	reg.accepting.Store(true) // Start accepting transactions by default
 	return reg
@@ -60,7 +60,7 @@ func (r *TransactionRegistry) SetTransactionIsolationLevel(txnID int64, level st
 	defer r.mu.Unlock()
 
 	// Update the transaction-specific isolation level
-	r.transactionIsolationLevel.Put(txnID, level)
+	r.transactionIsolationLevel[txnID] = level
 }
 
 // RemoveTransactionIsolationLevel removes the isolation level for a transaction
@@ -69,7 +69,7 @@ func (r *TransactionRegistry) RemoveTransactionIsolationLevel(txnID int64) {
 	defer r.mu.Unlock()
 
 	// Remove the transaction-specific isolation level
-	r.transactionIsolationLevel.Del(txnID)
+	delete(r.transactionIsolationLevel, txnID)
 }
 
 // SetGlobalIsolationLevel sets the isolation level for this registry
@@ -93,7 +93,7 @@ func (r *TransactionRegistry) GetIsolationLevel(txnID int64) storage.IsolationLe
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	if level, ok := r.transactionIsolationLevel.Get(txnID); ok {
+	if level, ok := r.transactionIsolationLevel[txnID]; ok {
 		// If transaction-specific level is set, use that
 		return level
 	}

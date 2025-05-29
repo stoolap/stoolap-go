@@ -450,8 +450,15 @@ func (db *DB) Begin() (Tx, error) {
 
 // BeginTx starts a new transaction with options
 func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) {
+	// Default to the engine's current isolation level
 	isolationLevel := sql.LevelReadCommitted
-	if opts != nil {
+	engineLevel := db.engine.GetIsolationLevel()
+	if engineLevel == storage.SnapshotIsolation {
+		isolationLevel = sql.LevelSnapshot
+	}
+
+	// Override with options if provided
+	if opts != nil && opts.Isolation != sql.LevelDefault {
 		isolationLevel = opts.Isolation
 	}
 

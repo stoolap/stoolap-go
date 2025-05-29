@@ -60,8 +60,8 @@ type MVCCEngine struct {
 	// Cleanup related fields
 	cleanupCancel func() // Function to stop the cleanup goroutine
 
-	// Commit synchronization for SNAPSHOT isolation
-	commitMu sync.Mutex
+	// Tables mutex for synchronizing access to table operations
+	tableMu map[string]*sync.RWMutex
 }
 
 // NewMVCCEngine creates a new MVCC storage engine
@@ -72,6 +72,7 @@ func NewMVCCEngine(config *storage.Config) *MVCCEngine {
 		schemas:       make(map[string]storage.Schema),
 		versionStores: make(map[string]*VersionStore),
 		registry:      NewTransactionRegistry(),
+		tableMu:       make(map[string]*sync.RWMutex, 10),
 	}
 
 	if engine.path == "" {
@@ -460,6 +461,9 @@ func (e *MVCCEngine) CreateTable(schema storage.Schema) (storage.Schema, error) 
 	// Store schema with lowercase key but preserve original name in schema
 	e.schemas[name] = schema
 
+	// Initialize table mutex for this table
+	e.tableMu[name] = &sync.RWMutex{}
+
 	// Create disk store if persistence is enabled
 	if e.persistence != nil && e.persistence.IsEnabled() {
 		// Create a disk store for the table, even if there are no snapshots yet
@@ -648,6 +652,29 @@ func (e *MVCCEngine) CleanupDeletedRows(maxAge time.Duration) int {
 	return totalRemoved
 }
 
+// CleanupOldPreviousVersions removes previous versions that are no longer needed
+// Returns the total number of previous versions removed
+func (e *MVCCEngine) CleanupOldPreviousVersions() int {
+	if !e.open.Load() {
+		return 0 // Engine not open
+	}
+
+	totalCleaned := 0
+
+	// Lock for accessing version stores
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	// Iterate through all tables and clean up previous versions in each
+	for _, vs := range e.versionStores {
+		if vs != nil {
+			totalCleaned += vs.CleanupOldPreviousVersions()
+		}
+	}
+
+	return totalCleaned
+}
+
 // EvictColdData evicts cold data from memory across all tables
 // This helps manage memory usage by keeping only hot data in memory
 // Returns the total number of rows evicted
@@ -691,6 +718,9 @@ func (e *MVCCEngine) StartPeriodicCleanup(interval, maxAge time.Duration) func()
 				// This keeps consistency between transaction and version cleanup
 				rowCount := e.CleanupDeletedRows(maxAge)
 
+				// Clean up old previous versions that are no longer needed
+				prevVersionCount := e.CleanupOldPreviousVersions()
+
 				// Evict cold data that hasn't been accessed in 2x maxAge
 				// Limit to 1000 rows per table to avoid excessive disk I/O
 				// evictedCount := e.EvictColdData(2*maxAge, 1000)
@@ -698,9 +728,9 @@ func (e *MVCCEngine) StartPeriodicCleanup(interval, maxAge time.Duration) func()
 				// FIXME: Check cold data eviction logic
 				evictedCount := 0
 
-				if rowCount > 0 || txnCount > 0 || evictedCount > 0 {
-					/* log.Printf("Cleanup: removed %d transactions, %d deleted rows older than %s, evicted %d cold rows\n",
-					txnCount, rowCount, maxAge, evictedCount) */
+				if rowCount > 0 || txnCount > 0 || evictedCount > 0 || prevVersionCount > 0 {
+					/* log.Printf("Cleanup: removed %d transactions, %d deleted rows older than %s, %d previous versions, evicted %d cold rows\n",
+					txnCount, rowCount, maxAge, prevVersionCount, evictedCount) */
 				}
 			case <-ctx.Done():
 				return
@@ -1068,4 +1098,46 @@ func (e *MVCCEngine) GetIndex(tableName, indexName string) (storage.Index, error
 	}
 
 	return nil, fmt.Errorf("index %s not found on table %s", indexName, tableName)
+}
+
+// AcquireTableLock acquires lock on a table
+func (e *MVCCEngine) AcquireTableLock(name string) {
+	if !e.open.Load() {
+		return // Engine not open, nothing to lock
+	}
+
+	// Normalize to lowercase for case-insensitive lookup
+	name = strings.ToLower(name)
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	// Get the table mutex or create a new one if it doesn't exist
+	if mutex, exists := e.tableMu[name]; exists {
+		mutex.Lock()
+		return
+	}
+
+	log.Printf("Warning: Attempted to lock non-existent table %s\n", name)
+}
+
+// ReleaseTableLock releases lock on a table
+func (e *MVCCEngine) ReleaseTableLock(name string) {
+	if !e.open.Load() {
+		return // Engine not open, nothing to unlock
+	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	// Normalize to lowercase for case-insensitive lookup
+	name = strings.ToLower(name)
+
+	// Check if the table mutex exists before unlocking
+	if mutex, exists := e.tableMu[name]; exists {
+		mutex.Unlock()
+		return
+	}
+
+	log.Printf("Warning: Attempted to unlock non-existent table %s\n", name)
 }
