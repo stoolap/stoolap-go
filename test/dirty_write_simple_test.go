@@ -267,7 +267,7 @@ func TestSimpleMoneyTransfer(t *testing.T) {
 					failedTransfers.Add(1)
 				}
 			} else {
-				err = tx.Rollback()
+				_ = tx.Rollback()
 				t.Logf("Tx %d: Rolled back due to failure", txID)
 				failedTransfers.Add(1)
 			}

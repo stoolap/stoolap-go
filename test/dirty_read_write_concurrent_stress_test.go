@@ -299,6 +299,10 @@ func TestHighConcurrencyDirtyRead(t *testing.T) {
 									"UPDATE read_test SET is_committed = ? WHERE id = ?",
 									driver.NamedValue{Ordinal: 1, Value: 1}, // Mark as committed (1)
 									driver.NamedValue{Ordinal: 2, Value: rowID})
+								if err != nil {
+									tx.Rollback()
+									continue
+								}
 								tx.Commit()
 							} else {
 								tx.Rollback()
