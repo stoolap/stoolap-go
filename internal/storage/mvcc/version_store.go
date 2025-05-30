@@ -581,7 +581,7 @@ func (vs *VersionStore) GetAllVisibleVersions(txnID int64) *fastmap.Int64Map[*Ro
 			}
 
 			// Check deletion visibility - if deleted by a visible transaction (but not current txn), skip it
-			if versionPtr.DeletedAtTxnID != 0 && versionPtr.DeletedAtTxnID != txnID && vs.engine.registry.IsDirectlyVisible(versionPtr.DeletedAtTxnID) {
+			if versionPtr.DeletedAtTxnID != 0 && versionPtr.DeletedAtTxnID != txnID && vs.engine.registry.IsVisible(versionPtr.DeletedAtTxnID, txnID) {
 				return true
 			}
 
@@ -719,19 +719,29 @@ func (vs *VersionStore) GetAllVisibleVersions(txnID int64) *fastmap.Int64Map[*Ro
 	return result
 }
 
+// WriteSetEntry tracks a write operation with the version read
+type WriteSetEntry struct {
+	ReadVersion    *RowVersion // Version when first read (nil if row didn't exist)
+	ReadVersionSeq int64       // Sequence number when read
+}
+
 // TransactionVersionStore holds changes specific to a transaction
 type TransactionVersionStore struct {
 	localVersions *fastmap.Int64Map[RowVersion] // RowID -> local version
 	parentStore   *VersionStore                 // Reference to the shared store
 	txnID         int64                         // This transaction's ID
 	fromPool      bool                          // Whether this object came from the pool
+
+	// Write-set tracking for conflict detection
+	writeSet *fastmap.Int64Map[WriteSetEntry] // RowID -> write set entry
 }
 
 // Pool for TransactionVersionStore objects
 var transactionVersionStorePool = sync.Pool{
 	New: func() interface{} {
 		return &TransactionVersionStore{
-			localVersions: fastmap.NewInt64Map[RowVersion](100), // Start with reasonable capacity
+			localVersions: fastmap.NewInt64Map[RowVersion](100),    // Start with reasonable capacity
+			writeSet:      fastmap.NewInt64Map[WriteSetEntry](100), // Start with reasonable capacity
 		}
 	},
 }
@@ -744,11 +754,17 @@ func NewTransactionVersionStore(
 	// Get an object from the pool
 	tvs := transactionVersionStorePool.Get().(*TransactionVersionStore)
 
-	// Initialize or clear the map
+	// Initialize or clear the maps
 	if tvs.localVersions == nil {
 		tvs.localVersions = fastmap.NewInt64Map[RowVersion](100)
 	} else {
 		tvs.localVersions.Clear()
+	}
+
+	if tvs.writeSet == nil {
+		tvs.writeSet = fastmap.NewInt64Map[WriteSetEntry](100)
+	} else {
+		tvs.writeSet.Clear()
 	}
 
 	// Set the fields
@@ -764,10 +780,39 @@ func (tvs *TransactionVersionStore) Put(rowID int64, data storage.Row, isDelete 
 	// First check if we already have a local version of this row
 	// If we do, we've already claimed it
 	if !tvs.localVersions.Has(rowID) {
-		// This is a new update/delete - need to claim the row
-		if err := tvs.ClaimRowForUpdate(rowID); err != nil {
-			// Another transaction has uncommitted changes to this row
-			return err
+		// Check if this row exists in the parent store
+		var rowExists bool
+		if tvs.parentStore != nil {
+			_, rowExists = tvs.parentStore.GetVisibleVersion(rowID, tvs.txnID)
+		}
+
+		// Only claim the row if it exists (for updates/deletes)
+		// New rows (inserts) don't need to be claimed
+		if rowExists {
+			if err := tvs.ClaimRowForUpdate(rowID); err != nil {
+				// Another transaction has uncommitted changes to this row
+				return err
+			}
+		}
+
+		// Track in write-set if not already tracked
+		// Note: We might already have tracked this from a previous read in Get()
+		if !tvs.writeSet.Has(rowID) {
+			// Get the current version from parent store for conflict detection
+			var readVersion *RowVersion
+			if tvs.parentStore != nil {
+				if version, exists := tvs.parentStore.GetVisibleVersion(rowID, tvs.txnID); exists {
+					versionCopy := version
+					readVersion = &versionCopy
+				}
+			}
+
+			// Track this write with the version we read
+			entry := WriteSetEntry{
+				ReadVersion:    readVersion,
+				ReadVersionSeq: tvs.parentStore.engine.registry.GetCurrentSequence(),
+			}
+			tvs.writeSet.Put(rowID, entry)
 		}
 	}
 
@@ -793,20 +838,54 @@ func (tvs *TransactionVersionStore) Put(rowID int64, data storage.Row, isDelete 
 // PutRowsBatch efficiently adds multiple rows with different data values
 // This is optimized for batch insert operations
 func (tvs *TransactionVersionStore) PutRowsBatch(rowIDs []int64, rows []storage.Row, isDelete bool) error {
-	// First, try to claim all rows atomically
+	// Get current sequence for conflict detection
+	currentSeq := tvs.parentStore.engine.registry.GetCurrentSequence()
+
+	// First, try to claim all rows that exist atomically
 	// We need to check/claim all rows before modifying any
-	for i, rowID := range rowIDs {
+	rowsToClaimMap := make(map[int64]bool)
+	for _, rowID := range rowIDs {
 		if !tvs.localVersions.Has(rowID) {
-			// This is a new update/delete - need to claim the row
-			if err := tvs.ClaimRowForUpdate(rowID); err != nil {
-				// Another transaction has uncommitted changes to this row
-				// Release any rows we already claimed
-				for j := 0; j < i; j++ {
-					if !tvs.localVersions.Has(rowIDs[j]) {
-						tvs.ReleaseRowClaim(rowIDs[j])
+			// Check if this row exists in the parent store
+			var rowExists bool
+			if tvs.parentStore != nil {
+				_, rowExists = tvs.parentStore.GetVisibleVersion(rowID, tvs.txnID)
+			}
+
+			// Only claim the row if it exists (for updates/deletes)
+			if rowExists {
+				rowsToClaimMap[rowID] = true
+				if err := tvs.ClaimRowForUpdate(rowID); err != nil {
+					// Another transaction has uncommitted changes to this row
+					// Release any rows we already claimed
+					for claimedRowID := range rowsToClaimMap {
+						if claimedRowID == rowID {
+							break // Don't release rows we haven't claimed yet
+						}
+						tvs.ReleaseRowClaim(claimedRowID)
+					}
+					return err
+				}
+			}
+
+			// Track in write-set if not already tracked
+			// Note: We might already have tracked this from a previous read in Get()
+			if !tvs.writeSet.Has(rowID) {
+				// Get the current version from parent store for conflict detection
+				var readVersion *RowVersion
+				if tvs.parentStore != nil {
+					if version, exists := tvs.parentStore.GetVisibleVersion(rowID, tvs.txnID); exists {
+						versionCopy := version
+						readVersion = &versionCopy
 					}
 				}
-				return err
+
+				// Track this write with the version we read
+				entry := WriteSetEntry{
+					ReadVersion:    readVersion,
+					ReadVersionSeq: currentSeq,
+				}
+				tvs.writeSet.Put(rowID, entry)
 			}
 		}
 	}
@@ -843,6 +922,7 @@ func ReleaseTransactionVersionStore(tvs *TransactionVersionStore) {
 
 	// Clear fields to prevent memory leaks
 	tvs.localVersions.Clear()
+	tvs.writeSet.Clear()
 	tvs.parentStore = nil
 	tvs.txnID = 0
 	tvs.fromPool = false
@@ -886,10 +966,44 @@ func (tvs *TransactionVersionStore) Get(rowID int64) (storage.Row, bool) {
 	// If not in local store, check parent store with visibility rules
 	if tvs.parentStore != nil {
 		if version, exists := tvs.parentStore.GetVisibleVersion(rowID, tvs.txnID); exists {
+			// Track this read in the write-set for conflict detection
+			// We only track if we're going to potentially write to this row later
+			if !tvs.writeSet.Has(rowID) {
+				// Store the version we read
+				versionCopy := version
+				entry := WriteSetEntry{
+					ReadVersion:    &versionCopy,
+					ReadVersionSeq: tvs.parentStore.engine.registry.GetCurrentSequence(),
+				}
+				tvs.writeSet.Put(rowID, entry)
+			}
+
+			// IMPORTANT: In SNAPSHOT isolation, a deleted row that is visible to this
+			// transaction should still be returned. The deletion visibility is already
+			// handled by GetVisibleVersion - if it returned a deleted row, it means
+			// this transaction should see the row as it existed before deletion.
+			// Only in READ COMMITTED mode should we hide deleted rows immediately.
 			if version.IsDeleted() {
+				// Check isolation level to determine behavior
+				isolationLevel := tvs.parentStore.engine.registry.GetIsolationLevel(tvs.txnID)
+				if isolationLevel == storage.SnapshotIsolation {
+					// In SNAPSHOT isolation, return the deleted row if it's visible
+					// The caller will need to handle the deleted status appropriately
+					return version.Data, true
+				}
+				// In READ COMMITTED, hide deleted rows
 				return nil, false
 			}
 			return version.Data, true
+		}
+
+		// Track that we read a non-existent row
+		if !tvs.writeSet.Has(rowID) {
+			entry := WriteSetEntry{
+				ReadVersion:    nil, // Row didn't exist when we read
+				ReadVersionSeq: tvs.parentStore.engine.registry.GetCurrentSequence(),
+			}
+			tvs.writeSet.Put(rowID, entry)
 		}
 	}
 
@@ -1007,6 +1121,56 @@ func (tvs *TransactionVersionStore) GetAllVisibleRows() *fastmap.Int64Map[storag
 	})
 
 	return result
+}
+
+// DetectConflicts checks for write-write conflicts with other transactions
+// Returns an error if any row in the write-set was modified after this transaction began
+func (tvs *TransactionVersionStore) DetectConflicts() error {
+	if tvs.parentStore == nil || tvs.writeSet == nil {
+		return nil
+	}
+
+	// Get this transaction's begin sequence for comparison
+	txnBeginSeq := tvs.parentStore.engine.registry.GetTransactionBeginSeq(tvs.txnID)
+
+	// Check each write in our write-set
+	var conflictErr error
+	tvs.writeSet.ForEach(func(rowID int64, entry WriteSetEntry) bool {
+		// Get the current version from parent store
+		currentVersion, exists := tvs.parentStore.versions.Get(rowID)
+
+		// Case 1: We're creating a new row (entry.ReadVersion == nil)
+		if entry.ReadVersion == nil {
+			// If a row now exists that didn't exist when we read, that's a conflict
+			if exists {
+				// Check if this version was created after our transaction began
+				commitSeq, committed := tvs.parentStore.engine.registry.GetCommitTimestamp(currentVersion.TxnID)
+				if committed && commitSeq > txnBeginSeq {
+					conflictErr = fmt.Errorf("write-write conflict: row %d was created by transaction %d after this transaction began", rowID, currentVersion.TxnID)
+					return false // Stop iteration
+				}
+			}
+			return true // Continue
+		}
+
+		// Case 2: We're updating an existing row
+		if !exists {
+			// Row was deleted by another transaction
+			conflictErr = fmt.Errorf("write-write conflict: row %d was deleted after this transaction read it", rowID)
+			return false
+		}
+
+		// Check if the version changed
+		if currentVersion.TxnID != entry.ReadVersion.TxnID {
+			// The row was modified by another transaction
+			conflictErr = fmt.Errorf("write-write conflict: row %d was modified by transaction %d after this transaction read it", rowID, currentVersion.TxnID)
+			return false
+		}
+
+		return true // Continue checking other rows
+	})
+
+	return conflictErr
 }
 
 // Commit merges local changes into the parent version store

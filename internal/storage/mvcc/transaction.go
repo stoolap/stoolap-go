@@ -143,7 +143,10 @@ func (t *MVCCTransaction) Commit() error {
 
 	if effectiveIsolationLevel == storage.SnapshotIsolation && !isReadOnly {
 		// Commit each table with conflict checking
-		for _, table := range t.tables {
+		for tableName, table := range t.tables {
+			t.engine.AcquireTableLock(tableName)
+			defer t.engine.ReleaseTableLock(tableName)
+
 			if table.txnVersions != nil {
 				if err := table.Commit(); err != nil {
 					t.engine.registry.AbortTransaction(t.id)

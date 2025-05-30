@@ -1476,23 +1476,16 @@ func (mt *MVCCTable) Scan(columnIndices []int, where storage.Expression) (storag
 
 		// For equality operator, we can do direct row lookup (fastest path)
 		if pkInfo.Operator == storage.EQ && pkInfo.ID != 0 {
-			// Direct lookup by ID
-			// First check transaction's local versions
+			// Direct lookup by ID through transaction version store
+			// This properly checks both local and parent stores with visibility rules
 			row, exists := mt.txnVersions.Get(pkInfo.ID)
-			if exists {
-				// Found in local versions
-				return newSingleRowScanner(row, schema, columnIndices), nil
-			}
-
-			// Not in local versions, check global version store
-			version, exists := mt.versionStore.GetVisibleVersion(pkInfo.ID, mt.txnID)
 			if !exists {
 				// Row doesn't exist or isn't visible to this transaction
 				return newEmptyScanner(), nil
 			}
 
-			// Return a scanner with just this single row from global store
-			return newSingleRowScanner(version.Data, schema, columnIndices), nil
+			// Return a scanner with just this single row
+			return newSingleRowScanner(row, schema, columnIndices), nil
 		}
 
 		if pkInfo.Expr != nil {
@@ -1914,10 +1907,26 @@ func (mt *MVCCTable) RowCount() int {
 
 // Commit merges the transaction's local changes to the global version store
 func (mt *MVCCTable) Commit() error {
-	// Merge local changes into the global version store
-	// The Commit method now automatically handles returning the object to the pool
-	mt.txnVersions.Commit()
-	mt.txnVersions = nil // Clear reference after commit
+	// If we have a transaction version store, check for conflicts before committing
+	if mt.txnVersions != nil {
+		// Get the transaction's isolation level
+		isolationLevel := mt.versionStore.engine.registry.GetIsolationLevel(mt.txnID)
+
+		// For SNAPSHOT isolation, check for write-write conflicts
+		if isolationLevel == storage.SnapshotIsolation {
+			if err := mt.txnVersions.DetectConflicts(); err != nil {
+				// Conflict detected, abort the transaction
+				mt.txnVersions.Rollback()
+				mt.txnVersions = nil
+				return err
+			}
+		}
+
+		// No conflicts, proceed with commit
+		// The Commit method now automatically handles returning the object to the pool
+		mt.txnVersions.Commit()
+		mt.txnVersions = nil // Clear reference after commit
+	}
 	return nil
 }
 

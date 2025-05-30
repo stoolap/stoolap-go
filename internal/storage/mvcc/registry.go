@@ -199,6 +199,11 @@ func (r *TransactionRegistry) GetTransactionBeginSeq(txnID int64) int64 {
 	return 0
 }
 
+// GetCurrentSequence returns the current sequence number
+func (r *TransactionRegistry) GetCurrentSequence() int64 {
+	return r.nextSequence.Load()
+}
+
 // IsDirectlyVisible is an optimized version that only checks common cases
 // for better performance in bulk operations. It only returns true for
 // already committed transactions (in ReadCommitted mode).

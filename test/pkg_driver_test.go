@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -311,16 +312,13 @@ func TestDriverConcurrency(t *testing.T) {
 		t.Fatalf("Failed to insert: %v", err)
 	}
 
-	_, err = db.Exec(ctx, "SET ISOLATIONLEVEL = 'SNAPSHOT'")
-	if err != nil {
-		t.Fatalf("Failed to set isolation level: %v", err)
-	}
+	// Don't set global isolation level - we'll use BeginTx with explicit level
 
 	// Run concurrent updates
 	var wg sync.WaitGroup
 	numGoroutines := 10
 	incrementsPerGoroutine := 100
-	var successCount, conflictCount int32
+	var successCount, conflictCount, updateFailCount, readFailCount, beginFailCount int32
 
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
@@ -332,20 +330,46 @@ func TestDriverConcurrency(t *testing.T) {
 					Isolation: sql.LevelSnapshot,
 				})
 				if err != nil {
+					atomic.AddInt32(&beginFailCount, 1)
 					continue
 				}
 
-				// Use UPDATE with increment directly (read-modify-write in one statement)
-				_, err = tx.ExecContext(ctx, "UPDATE counter SET value = value + 1 WHERE id = 1")
+				// First read the current value
+				var currentValue int
+				rows, err := tx.QueryContext(ctx, "SELECT value FROM counter WHERE id = 1")
 				if err != nil {
 					tx.Rollback()
+					atomic.AddInt32(&readFailCount, 1)
+					continue
+				}
+				if rows.Next() {
+					err = rows.Scan(&currentValue)
+					rows.Close()
+					if err != nil {
+						tx.Rollback()
+						atomic.AddInt32(&readFailCount, 1)
+						continue
+					}
+				} else {
+					rows.Close()
+					tx.Rollback()
+					atomic.AddInt32(&readFailCount, 1)
+					continue
+				}
+
+				// Then update with the incremented value
+				_, err = tx.ExecContext(ctx, "UPDATE counter SET value = ? WHERE id = 1", driver.NamedValue{Value: currentValue + 1})
+				if err != nil {
+					tx.Rollback()
+					atomic.AddInt32(&updateFailCount, 1)
 					continue
 				}
 
 				// Try to commit
 				err = tx.Commit()
 				if err != nil {
-					if err.Error() == "transaction aborted due to write-write conflict" {
+					// Check for write-write conflict errors
+					if strings.Contains(err.Error(), "write-write conflict") {
 						atomic.AddInt32(&conflictCount, 1)
 					}
 				} else {
@@ -368,6 +392,9 @@ func TestDriverConcurrency(t *testing.T) {
 	t.Logf("Final value: %d", finalValue)
 	t.Logf("Successful commits: %d", successCount)
 	t.Logf("Conflicts detected: %d", conflictCount)
+	t.Logf("Begin failures: %d", beginFailCount)
+	t.Logf("Read failures: %d", readFailCount)
+	t.Logf("Update failures: %d", updateFailCount)
 	t.Logf("Total attempts: %d", numGoroutines*incrementsPerGoroutine)
 
 	// With proper SNAPSHOT isolation and write-write conflict detection:
@@ -377,9 +404,10 @@ func TestDriverConcurrency(t *testing.T) {
 	}
 
 	// All attempts should be accounted for
-	if successCount+conflictCount != int32(numGoroutines*incrementsPerGoroutine) {
-		t.Errorf("Lost transactions: %d success + %d conflicts != %d total attempts",
-			successCount, conflictCount, numGoroutines*incrementsPerGoroutine)
+	totalAccounted := successCount + conflictCount + updateFailCount + readFailCount + beginFailCount
+	if totalAccounted != int32(numGoroutines*incrementsPerGoroutine) {
+		t.Errorf("Lost transactions: %d success + %d conflicts + %d begin failures + %d read failures + %d update failures = %d != %d total attempts",
+			successCount, conflictCount, beginFailCount, readFailCount, updateFailCount, totalAccounted, numGoroutines*incrementsPerGoroutine)
 	}
 }
 

@@ -18,6 +18,7 @@ package test
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	_ "github.com/stoolap/stoolap/pkg/driver"
@@ -335,7 +336,7 @@ func TestConnectionIsolation(t *testing.T) {
 		} else {
 			t.Errorf("Expected write-write conflict for SNAPSHOT isolation, but commit succeeded. Final value: %d", finalValue)
 		}
-	} else if err.Error() != "transaction aborted due to write-write conflict" {
+	} else if !strings.Contains(err.Error(), "write-write conflict") {
 		t.Errorf("Expected write-write conflict error, got: %v", err)
 	}
 }
@@ -414,7 +415,7 @@ func TestTransactionLevelOverride(t *testing.T) {
 	err = tx2.Commit()
 	if err == nil {
 		t.Error("Expected write-write conflict, but commit succeeded")
-	} else if err.Error() != "transaction aborted due to write-write conflict" {
+	} else if !strings.Contains(err.Error(), "write-write conflict") {
 		t.Errorf("Expected write-write conflict error, got: %v", err)
 	}
 }

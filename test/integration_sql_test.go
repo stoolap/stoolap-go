@@ -61,10 +61,6 @@ func TestIntegrationSQL(t *testing.T) {
 		testTransactionSupport(t, db)
 	})
 
-	t.Run("WindowFunctions", func(t *testing.T) {
-		testWindowFunctions(t, db)
-	})
-
 	t.Run("SimpleJoins", func(t *testing.T) {
 		testSimpleJoins(t, db)
 	})
@@ -575,12 +571,6 @@ func testTransactionSupport(t *testing.T, db *sql.DB) {
 
 	// Clean up
 	_, _ = db.Exec("DROP TABLE tx_test")
-}
-
-func testWindowFunctions(t *testing.T, db *sql.DB) {
-	// Window functions with OVER clause are not yet fully supported
-	// Skip this test for now
-	t.Skip("Window functions with OVER clause not yet supported")
 }
 
 func testSimpleJoins(t *testing.T, db *sql.DB) {

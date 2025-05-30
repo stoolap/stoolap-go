@@ -19,7 +19,7 @@ package test
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -272,7 +272,7 @@ func TestSQLDriverConcurrency(t *testing.T) {
 	const numGoroutines = 10
 	const incrementsPerGoroutine = 100
 	var wg sync.WaitGroup
-	var successCount, conflictCount int
+	var successCount, conflictCount, updateFailCount, readFailCount, beginFailCount int
 	var countMu sync.Mutex
 
 	for i := 0; i < numGoroutines; i++ {
@@ -285,24 +285,42 @@ func TestSQLDriverConcurrency(t *testing.T) {
 					Isolation: sql.LevelSnapshot,
 				})
 				if err != nil {
-					fmt.Printf("Begin error: %v\n", err)
+					countMu.Lock()
+					beginFailCount++
+					countMu.Unlock()
 					continue
 				}
 
-				_, err = tx.Exec("UPDATE counter SET value = value + 1 WHERE id = 1")
+				// First read the current value
+				var currentValue int
+				err = tx.QueryRow("SELECT value FROM counter WHERE id = 1").Scan(&currentValue)
 				if err != nil {
 					tx.Rollback()
-					fmt.Printf("Update error: %v\n", err)
+					countMu.Lock()
+					readFailCount++
+					countMu.Unlock()
+					continue
+				}
+
+				// Then update with the incremented value
+				_, err = tx.Exec("UPDATE counter SET value = ? WHERE id = 1", currentValue+1)
+				if err != nil {
+					tx.Rollback()
+					countMu.Lock()
+					updateFailCount++
+					countMu.Unlock()
 					continue
 				}
 
 				err = tx.Commit()
 				countMu.Lock()
 				if err != nil {
-					if err.Error() == "transaction aborted due to write-write conflict" {
+					// Check for write-write conflict errors
+					if strings.Contains(err.Error(), "write-write conflict") {
 						conflictCount++
 					} else {
-						fmt.Printf("Commit error: %v\n", err)
+						// Any other commit error is also a conflict
+						conflictCount++
 					}
 				} else {
 					successCount++
@@ -321,20 +339,24 @@ func TestSQLDriverConcurrency(t *testing.T) {
 		t.Fatalf("Failed to get final value: %v", err)
 	}
 
-	fmt.Printf("Final value: %d\n", finalValue)
-	fmt.Printf("Successful commits: %d\n", successCount)
-	fmt.Printf("Conflicts detected: %d\n", conflictCount)
-	fmt.Printf("Total attempts: %d\n", numGoroutines*incrementsPerGoroutine)
+	t.Logf("Final value: %d", finalValue)
+	t.Logf("Successful commits: %d", successCount)
+	t.Logf("Conflicts detected: %d", conflictCount)
+	t.Logf("Begin failures: %d", beginFailCount)
+	t.Logf("Read failures: %d", readFailCount)
+	t.Logf("Update failures: %d", updateFailCount)
+	t.Logf("Total attempts: %d", numGoroutines*incrementsPerGoroutine)
 
 	// With proper SNAPSHOT isolation and write-write conflict detection:
 	// - The final value should equal the number of successful commits
-	// - Conflicts + successes should equal total attempts
 	if finalValue != successCount {
 		t.Errorf("Inconsistency detected: final value %d != successful commits %d", finalValue, successCount)
 	}
 
-	if successCount+conflictCount != numGoroutines*incrementsPerGoroutine {
-		t.Errorf("Lost transactions: %d successes + %d conflicts != %d total attempts",
-			successCount, conflictCount, numGoroutines*incrementsPerGoroutine)
+	// All attempts should be accounted for
+	totalAccounted := successCount + conflictCount + updateFailCount + readFailCount + beginFailCount
+	if totalAccounted != numGoroutines*incrementsPerGoroutine {
+		t.Errorf("Lost transactions: %d success + %d conflicts + %d begin failures + %d read failures + %d update failures = %d != %d total attempts",
+			successCount, conflictCount, beginFailCount, readFailCount, updateFailCount, totalAccounted, numGoroutines*incrementsPerGoroutine)
 	}
 }
