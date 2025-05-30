@@ -114,6 +114,15 @@ func (f *SumFunction) Accumulate(value any, distinct bool) {
 		case float64:
 			f.sum = sum + val
 		}
+	default:
+		switch val := value.(type) {
+		case int64:
+			f.sum = val
+		case uint64:
+			f.sum = int64(val)
+		case float64:
+			f.sum = val
+		}
 	}
 }
 
