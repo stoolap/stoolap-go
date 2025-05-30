@@ -25,8 +25,8 @@ import (
 type SumFunction struct {
 	sum         any
 	distinct    bool
-	values      map[valuePair]struct{} // used for DISTINCT
-	initialized bool                   // track if we've seen any values
+	values      map[distinctValuePair]struct{} // used for DISTINCT
+	initialized bool                           // track if we've seen any values
 }
 
 // Name returns the name of the function
@@ -126,17 +126,23 @@ func (f *SumFunction) Accumulate(value any, distinct bool) {
 	}
 }
 
-type valuePair struct {
+// valuePair is a struct used to store distinct values for the SUM function.
+// It holds both int64 and float64 representations to handle distinct checks
+// for both integer and floating-point versions of inputs. In SQL standard SUM
+// function treats 2.0 and 2 as the same value, so we need to ensure that
+// we can compare both integer and floating-point values correctly for avoiding
+// duplicate entries.
+type distinctValuePair struct {
 	intEq   int64
 	floatEq float64
 }
 
 func (f *SumFunction) isDistinct(value any) bool {
 	if f.values == nil {
-		f.values = make(map[valuePair]struct{})
+		f.values = make(map[distinctValuePair]struct{})
 	}
 
-	var pair valuePair
+	var pair distinctValuePair
 	switch v := value.(type) {
 	case int64:
 		pair.intEq = v
@@ -182,7 +188,7 @@ func (f *SumFunction) Reset() {
 func NewSumFunction() contract.AggregateFunction {
 	return &SumFunction{
 		sum:         int64(0),
-		values:      make(map[valuePair]struct{}),
+		values:      make(map[distinctValuePair]struct{}),
 		distinct:    false,
 		initialized: false,
 	}
