@@ -145,14 +145,17 @@ func (t *MVCCTransaction) Commit() error {
 		// Commit each table with conflict checking
 		for tableName, table := range t.tables {
 			t.engine.AcquireTableLock(tableName)
-			defer t.engine.ReleaseTableLock(tableName)
 
 			if table.txnVersions != nil {
 				if err := table.Commit(); err != nil {
+					t.engine.ReleaseTableLock(tableName)
 					t.engine.registry.AbortTransaction(t.id)
 					return err
 				}
 			}
+
+			// Release lock immediately after committing each table
+			t.engine.ReleaseTableLock(tableName)
 		}
 
 		// Only after all data is written, mark transaction as committed in registry
