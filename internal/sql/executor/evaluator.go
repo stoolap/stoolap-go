@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/functions/contract"
@@ -132,6 +133,32 @@ func (e *Evaluator) Evaluate(expr parser.Expression) (storage.ColumnValue, error
 
 	case *parser.NullLiteral:
 		return storage.StaticNullUnknown, nil
+
+	case *parser.IntervalLiteral:
+		// Convert interval to duration in nanoseconds
+		var duration int64
+		switch expr.Unit {
+		case "second":
+			duration = expr.Quantity * 1e9
+		case "minute":
+			duration = expr.Quantity * 60 * 1e9
+		case "hour":
+			duration = expr.Quantity * 3600 * 1e9
+		case "day":
+			duration = expr.Quantity * 86400 * 1e9
+		case "week":
+			duration = expr.Quantity * 7 * 86400 * 1e9
+		case "month":
+			// Approximate: 30 days per month
+			duration = expr.Quantity * 30 * 86400 * 1e9
+		case "year":
+			// Approximate: 365 days per year
+			duration = expr.Quantity * 365 * 86400 * 1e9
+		default:
+			return storage.StaticNullUnknown, fmt.Errorf("unsupported interval unit: %s", expr.Unit)
+		}
+		// Store as integer (nanoseconds)
+		return storage.GetPooledIntegerValue(duration), nil
 
 	case *parser.CastExpression:
 		// Handle CAST expressions by evaluating the expression first
@@ -1146,6 +1173,31 @@ func (e *Evaluator) EvaluateArithmeticExpression(left, right parser.Expression, 
 		rightStr, rightOk := rightVal.AsString()
 		if leftOk && rightOk {
 			return storage.GetPooledStringValue(leftStr + rightStr), nil
+		}
+	}
+
+	// Handle timestamp arithmetic (timestamp +/- interval)
+	if leftVal.Type() == storage.TIMESTAMP && rightVal.Type() == storage.INTEGER {
+		if operator == "+" || operator == "-" {
+			timestamp, ok := leftVal.AsTimestamp()
+			if !ok {
+				return storage.StaticNullUnknown, fmt.Errorf("invalid timestamp value")
+			}
+
+			// Right value is interval in nanoseconds
+			intervalNanos, ok := rightVal.AsInt64()
+			if !ok {
+				return storage.StaticNullUnknown, fmt.Errorf("invalid interval value")
+			}
+
+			var result time.Time
+			if operator == "+" {
+				result = timestamp.Add(time.Duration(intervalNanos))
+			} else {
+				result = timestamp.Add(-time.Duration(intervalNanos))
+			}
+
+			return storage.GetPooledTimestampValue(result), nil
 		}
 	}
 

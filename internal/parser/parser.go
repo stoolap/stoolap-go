@@ -3174,9 +3174,79 @@ func (p *Parser) parseKeyword() Expression {
 		// If not followed by a parenthesis, handle as an error
 		p.addError(fmt.Sprintf("expected '(' after CAST keyword at %s", p.curToken.Position))
 		return nil
+	case "INTERVAL":
+		return p.parseIntervalLiteral()
+	case "TIMESTAMP", "DATE", "TIME":
+		// Handle type literals like TIMESTAMP '2025-01-01'
+		if p.peekTokenIs(TokenString) {
+			typeHint := p.curToken.Literal
+			p.nextToken() // consume the string
+
+			// Extract the string value without quotes
+			literal := p.curToken.Literal
+			value := literal
+			if len(literal) >= 2 && literal[0] == '\'' && literal[len(literal)-1] == '\'' {
+				value = literal[1 : len(literal)-1] // Remove quotes
+			}
+
+			return &StringLiteral{
+				Token:    p.curToken,
+				Value:    value,
+				TypeHint: typeHint,
+			}
+		}
+		// If not followed by a string, handle as an error
+		p.addError(fmt.Sprintf("expected string literal after %s keyword at %s", p.curToken.Literal, p.curToken.Position))
+		return nil
 	default:
 		p.addError(fmt.Sprintf("unexpected keyword: %s at %s", p.curToken.Literal, p.curToken.Position))
 		return nil
+	}
+}
+
+// parseIntervalLiteral parses an INTERVAL literal (e.g. INTERVAL '1 day')
+func (p *Parser) parseIntervalLiteral() Expression {
+	intervalToken := p.curToken
+
+	// Expect a string literal after INTERVAL
+	if !p.expectPeek(TokenString) {
+		return nil
+	}
+
+	// Extract the string value without quotes
+	literal := p.curToken.Literal
+	value := literal
+	if len(literal) >= 2 && literal[0] == '\'' && literal[len(literal)-1] == '\'' {
+		value = literal[1 : len(literal)-1] // Remove quotes
+	}
+
+	// Parse the interval value to extract quantity and unit
+	parts := strings.Fields(value)
+	if len(parts) < 2 {
+		p.addError(fmt.Sprintf("invalid interval format: %s at %s", value, p.curToken.Position))
+		return nil
+	}
+
+	// Parse the numeric quantity
+	quantity := int64(0)
+	if num, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+		quantity = num
+	} else {
+		p.addError(fmt.Sprintf("invalid interval quantity: %s at %s", parts[0], p.curToken.Position))
+		return nil
+	}
+
+	// Get the unit (normalize to lowercase)
+	unit := strings.ToLower(parts[1])
+
+	// Normalize plural units to singular
+	unit = strings.TrimSuffix(unit, "s")
+
+	return &IntervalLiteral{
+		Token:    intervalToken,
+		Value:    value,
+		Quantity: quantity,
+		Unit:     unit,
 	}
 }
 

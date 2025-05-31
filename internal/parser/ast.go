@@ -164,6 +164,19 @@ func (nl *NullLiteral) TokenLiteral() string { return nl.Token.Literal }
 func (nl *NullLiteral) String() string       { return "NULL" }
 func (nl *NullLiteral) Position() Position   { return nl.Token.Position }
 
+// IntervalLiteral represents an INTERVAL literal (e.g. INTERVAL '1 day')
+type IntervalLiteral struct {
+	Token    Token  // TokenKeyword token (INTERVAL)
+	Value    string // The interval value (e.g. "1 day", "24 hours")
+	Quantity int64  // Numeric quantity
+	Unit     string // Time unit (e.g. "day", "hour", "minute")
+}
+
+func (il *IntervalLiteral) expressionNode()      {}
+func (il *IntervalLiteral) TokenLiteral() string { return il.Token.Literal }
+func (il *IntervalLiteral) String() string       { return fmt.Sprintf("INTERVAL '%s'", il.Value) }
+func (il *IntervalLiteral) Position() Position   { return il.Token.Position }
+
 // Parameter represents a dynamic parameter for prepared statements
 type Parameter struct {
 	Token            Token  // The parameter token (? or $N)

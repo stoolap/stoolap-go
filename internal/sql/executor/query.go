@@ -302,13 +302,11 @@ func (e *Executor) executeSelectWithContext(ctx context.Context, tx storage.Tran
 				default:
 					// Try to evaluate the expression
 					result, err := evaluator.Evaluate(expr)
-					defer storage.PutPooledColumnValue(result)
-					if err == nil {
-						values[0][i] = result.AsInterface()
-					} else {
-						// For other expressions, use string representation
-						values[0][i] = expr.String()
+					if err != nil {
+						return nil, fmt.Errorf("error evaluating expression %s: %v", expr.String(), err)
 					}
+					defer storage.PutPooledColumnValue(result)
+					values[0][i] = result.AsInterface()
 				}
 			}
 		}

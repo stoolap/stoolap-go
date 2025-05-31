@@ -257,6 +257,7 @@ var Keywords = map[string]bool{
 	"READ":        true,
 	"COMMITTED":   true,
 	"UNCOMMITTED": true,
+	"INTERVAL":    true,
 }
 
 // Operators is a map of SQL operators
