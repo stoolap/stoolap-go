@@ -113,6 +113,70 @@ The interval parameter accepts duration strings like:
 - `4h` - 4 hours
 - `1d` - 1 day
 
+## Date and Time Arithmetic with INTERVAL
+
+Stoolap supports PostgreSQL-style INTERVAL literals for date and time arithmetic:
+
+### INTERVAL Syntax
+
+```sql
+-- Subtract 24 hours from current time
+SELECT NOW() - INTERVAL '24 hours';
+
+-- Add 7 days to a timestamp
+SELECT event_date + INTERVAL '7 days' FROM events;
+
+-- Subtract 30 minutes
+SELECT NOW() - INTERVAL '30 minutes';
+```
+
+### Supported INTERVAL Units
+
+- `second` or `seconds` - For second-based intervals
+- `minute` or `minutes` - For minute-based intervals  
+- `hour` or `hours` - For hour-based intervals
+- `day` or `days` - For day-based intervals
+- `week` or `weeks` - For week-based intervals (7 days)
+- `month` or `months` - For month-based intervals (approximated as 30 days)
+- `year` or `years` - For year-based intervals (approximated as 365 days)
+
+### INTERVAL Examples
+
+```sql
+-- Find events from the last 24 hours
+SELECT * FROM events 
+WHERE event_date > NOW() - INTERVAL '24 hours';
+
+-- Find events from the last week
+SELECT * FROM events 
+WHERE event_date > NOW() - INTERVAL '7 days';
+
+-- Calculate event duration
+SELECT event_name,
+       end_time - start_time AS duration
+FROM events;
+
+-- Add specific intervals to timestamps
+SELECT event_date + INTERVAL '90 seconds' FROM events;
+SELECT event_date + INTERVAL '2 weeks' FROM events;
+```
+
+### Timestamp Literals
+
+You can also use typed timestamp literals:
+
+```sql
+-- TIMESTAMP literal
+SELECT TIMESTAMP '2025-01-01 12:00:00';
+
+-- Add interval to a specific timestamp
+SELECT TIMESTAMP '2025-01-01 12:00:00' + INTERVAL '25 hours';
+
+-- DATE and TIME literals are also supported
+SELECT DATE '2025-01-01';
+SELECT TIME '12:00:00';
+```
+
 ## Examples from Test Files
 
 ### Basic Timestamp Operations
@@ -198,11 +262,11 @@ Based on the implementation, Stoolap has the following limitations for date and 
 
 1. **Limited Time Zone Support**: While timestamps are normalized to UTC internally, there are no explicit functions for time zone conversion.
 
-2. **No Date/Time Arithmetic**: There are no built-in functions for adding or subtracting intervals from dates.
+2. **No Date/Time Extraction**: Functions to extract parts from dates (like EXTRACT(YEAR FROM date)) are not implemented.
 
-3. **No Date/Time Extraction**: Functions to extract parts from dates (like EXTRACT(YEAR FROM date)) are not implemented.
+3. **No Custom Formatting**: No functions to format timestamps in custom output formats.
 
-4. **No Custom Formatting**: No functions to format timestamps in custom output formats.
+4. **Approximate Month and Year Intervals**: INTERVAL calculations for months and years use approximations (30 days for months, 365 days for years) rather than calendar-aware calculations.
 
 ## Best Practices
 
