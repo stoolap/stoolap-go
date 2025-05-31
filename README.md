@@ -16,9 +16,10 @@ Stoolap is a high-performance, columnar SQL database written in pure Go with zer
 ## Key Features
 
 - **Pure Go Implementation**: Zero external dependencies for maximum portability
-- **ACID Transactions**: Full transaction support with MVCC (Multi-Version Concurrency Control)
-- **Fast Analytical Processing**: Columnar storage format optimized for analytical queries
-- **Columnar Indexing**: Efficient single and multi-column indexes for high-performance data access
+- **ACID Transactions**: Full transaction support with true MVCC (Multi-Version Concurrency Control)
+- **Lock-Free Design**: No table-level locks, even for SNAPSHOT isolation
+- **Fast Analytical Processing**: Columnar indexes optimized for analytical queries
+- **HTAP Capabilities**: Hybrid transactional/analytical processing in one engine
 - **Memory-First Design**: Optimized for in-memory performance with optional persistence
 - **Vectorized Execution**: SIMD-accelerated operations for high throughput
 - **SQL Support**: Rich SQL functionality including JOINs, aggregations, and more
@@ -142,18 +143,36 @@ Stoolap supports two storage modes:
 - **DDL**: CREATE/ALTER/DROP TABLE, CREATE/DROP INDEX, CREATE/DROP VIEW
 - **DML**: SELECT, INSERT, UPDATE, DELETE, MERGE
 - **Queries**: JOINs, GROUP BY, ORDER BY, LIMIT, OFFSET, subqueries, CTE (WITH), DISTINCT
+- **Transactions**: BEGIN/COMMIT/ROLLBACK with isolation levels
 - **Indexing**: CREATE INDEX, unique constraints, primary keys, multi-column indexes
 - **Functions**: Aggregate and scalar functions
+
+### Transaction Isolation
+
+Stoolap supports two isolation levels:
+
+- **READ COMMITTED** (default): High concurrency, sees committed changes immediately
+- **SNAPSHOT**: Consistent view from transaction start, with write-write conflict detection
+
+```sql
+-- Start a transaction with SNAPSHOT isolation
+BEGIN TRANSACTION ISOLATION LEVEL SNAPSHOT;
+SELECT * FROM accounts WHERE id = 1;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+COMMIT;
+```
 
 ## Performance Optimizations
 
 Stoolap includes numerous performance optimizations:
 
-- **Columnar Storage**: Optimized for analytical queries and compression
+- **Lock-Free MVCC**: Concurrent writers without serialization bottlenecks
+- **Columnar Indexes**: Optimized for analytical queries and compression
 - **SIMD Operations**: Vectorized execution for arithmetic, comparisons, and functions
-- **Specialized Data Structures**: Custom B-trees and hashmaps for high-throughput operations
+- **Specialized Data Structures**: Custom concurrent maps and B-trees for high throughput
 - **Expression Pushdown**: Filters pushed to storage layer for faster execution
 - **Type-Specific Optimization**: Optimized operations for different data types
+- **Version Chain Management**: Automatic garbage collection of old versions
 
 ## Development Status
 

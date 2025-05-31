@@ -277,7 +277,7 @@ func TestMVCCTable(t *testing.T) {
 
 	// Log the transaction details
 	registry := engine.GetRegistry()
-	commitTS1, committed := registry.GetCommitTimestamp(txnID1)
+	commitTS1, committed := registry.GetCommitSequence(txnID1)
 	t.Logf("Txn1 (ID %d) committed: %v, commit timestamp: %d", txnID1, committed, commitTS1)
 
 	// We can't directly access begin timestamps anymore since they're internal

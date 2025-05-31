@@ -135,64 +135,29 @@ func (t *MVCCTransaction) Commit() error {
 		}
 	}
 
-	// Get the effective isolation level for this transaction
-	effectiveIsolationLevel := t.engine.GetIsolationLevel()
-	if t.specificIsolationLevel != 0 {
-		effectiveIsolationLevel = t.specificIsolationLevel
-	}
+	// Two-phase commit protocol for atomic visibility
+	if !isReadOnly {
+		// Phase 1: Start commit - mark transaction as "committing"
+		// This prevents other transactions from seeing partial updates
+		t.engine.registry.StartCommit(t.id)
 
-	if effectiveIsolationLevel == storage.SnapshotIsolation && !isReadOnly {
-		// Commit each table with conflict checking
-		for tableName, table := range t.tables {
-			t.engine.AcquireTableLock(tableName)
-
+		// Phase 2: Add all versions to the version stores
+		// These won't be visible yet because the transaction is in "committing" state
+		for _, table := range t.tables {
 			if table.txnVersions != nil {
 				if err := table.Commit(); err != nil {
-					t.engine.ReleaseTableLock(tableName)
+					// If commit fails, abort the transaction
 					t.engine.registry.AbortTransaction(t.id)
 					return err
 				}
 			}
-
-			// Release lock immediately after committing each table
-			t.engine.ReleaseTableLock(tableName)
 		}
 
-		// Only after all data is written, mark transaction as committed in registry
-		t.engine.registry.CommitTransaction(t.id)
+		// Phase 3: Complete commit - mark transaction as fully committed
+		// This atomically makes all changes visible to other transactions
+		t.engine.registry.CompleteCommit(t.id)
 	} else {
-		// For READ COMMITTED or read-only transactions, no serialization needed
-		// But we still need to track write sequences for conflict detection by SNAPSHOT transactions
-
-		// Collect written rows if not read-only
-		var writtenRowsByTable map[string][]int64
-		if !isReadOnly {
-			writtenRowsByTable = make(map[string][]int64)
-			for tableName, table := range t.tables {
-				if table.txnVersions != nil && table.txnVersions.localVersions.Len() > 0 {
-					versionStore := t.engine.versionStores[tableName]
-					if versionStore != nil {
-						var writtenRows []int64
-						table.txnVersions.localVersions.ForEach(func(rowID int64, version RowVersion) bool {
-							writtenRows = append(writtenRows, rowID)
-							return true
-						})
-						writtenRowsByTable[tableName] = writtenRows
-					}
-				}
-			}
-		}
-
-		// First commit all MVCC tables to merge their changes to the global version stores
-		for _, table := range t.tables {
-			if err := table.Commit(); err != nil {
-				// If commit fails, abort the transaction
-				t.engine.registry.AbortTransaction(t.id)
-				return err
-			}
-		}
-
-		// Only after data is written, mark transaction as committed in registry
+		// For read-only transactions, just mark as committed
 		t.engine.registry.CommitTransaction(t.id)
 	}
 

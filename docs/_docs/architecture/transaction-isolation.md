@@ -77,12 +77,14 @@ Stoolap's MVCC implementation uses a combination of techniques to provide effici
 
 ### Row Versioning
 
-- Each row in a table can have multiple versions identified by transaction IDs
+- Each row maintains a full version chain linked via `prev` pointers
 - Each version includes:
   - Creation transaction ID
   - Deletion transaction ID (if applicable)
   - Column values at that version
-- This enables concurrent transactions to see different versions of the same row
+  - Pointer to previous version
+- Version chains enable concurrent transactions to see different historical versions
+- New versions are always created (immutability) - existing versions never modified
 
 ### Visibility Rules
 
@@ -160,11 +162,12 @@ During rollback:
 
 ## Concurrency Control
 
-Stoolap uses optimistic concurrency control:
+Stoolap uses optimistic concurrency control with lock-free design:
 
-1. Transactions proceed without acquiring locks for reading
-2. At commit time, the system checks for conflicts
-3. If a conflict is detected, the transaction is aborted
+1. Transactions proceed without acquiring any locks
+2. Multiple writers can work concurrently on different rows
+3. At commit time, the system checks for write-write conflicts
+4. If a conflict is detected, the transaction is aborted
 
 ### Write-Write Conflict Detection
 
@@ -275,9 +278,24 @@ COMMIT; -- Fails with: transaction aborted due to write-write conflict
 
 In this example, both transactions read the same initial value (1000) but Connection 2's commit fails because Connection 1 already modified the row after Connection 2's transaction began.
 
+## Performance Characteristics
+
+### Lock-Free Design
+
+- **No table-level locks** - SNAPSHOT isolation commits without global synchronization
+- **Concurrent writers** - Multiple transactions can commit simultaneously
+- **Version chain traversal** - Efficient backward traversal to find visible versions
+- **Automatic cleanup** - Old versions garbage collected when no longer needed
+
+### Memory Management
+
+- Version chains built from WAL replay during recovery
+- Only latest version persisted to disk snapshots
+- Old versions automatically cleaned up based on active transaction needs
+
 ## Limitations
 
-- Long-running transactions can cause version storage to grow, impacting performance
+- Long-running transactions prevent garbage collection of old versions
 - Extremely high concurrency on the same rows may lead to frequent conflicts in SNAPSHOT isolation
 - Savepoints are not currently supported
 - Each connection maintains its own default isolation level set by `SET ISOLATIONLEVEL`

@@ -168,13 +168,13 @@ In persistent mode, Stoolap uses disk storage with memory caching:
 
 ## Concurrency Model
 
-Stoolap uses a combination of concurrency techniques:
+Stoolap uses a lock-free concurrency model:
 
-- **MVCC** - Multiple versions of data for transaction isolation
+- **True MVCC** - Full version chains with unlimited history
 - **Optimistic Concurrency Control** - Transactions validate at commit time
-- **Fine-grained Locking** - Minimal contention through targeted locks
-- **Segmented Data Structures** - Reduced lock contention
-- **Lock-free Algorithms** - Where appropriate for performance
+- **Lock-Free Commits** - No table-level locks even for SNAPSHOT isolation
+- **Concurrent Writers** - Multiple transactions can commit simultaneously
+- **Segmented Data Structures** - Reduced contention for better scalability
 
 ## Memory Efficiency
 

@@ -59,9 +59,6 @@ type MVCCEngine struct {
 
 	// Cleanup related fields
 	cleanupCancel func() // Function to stop the cleanup goroutine
-
-	// Tables mutex for synchronizing access to table operations
-	tableMu map[string]*sync.RWMutex
 }
 
 // NewMVCCEngine creates a new MVCC storage engine
@@ -72,7 +69,6 @@ func NewMVCCEngine(config *storage.Config) *MVCCEngine {
 		schemas:       make(map[string]storage.Schema),
 		versionStores: make(map[string]*VersionStore),
 		registry:      NewTransactionRegistry(),
-		tableMu:       make(map[string]*sync.RWMutex, 10),
 	}
 
 	if engine.path == "" {
@@ -460,9 +456,6 @@ func (e *MVCCEngine) CreateTable(schema storage.Schema) (storage.Schema, error) 
 
 	// Store schema with lowercase key but preserve original name in schema
 	e.schemas[name] = schema
-
-	// Initialize table mutex for this table
-	e.tableMu[name] = &sync.RWMutex{}
 
 	// Create disk store if persistence is enabled
 	if e.persistence != nil && e.persistence.IsEnabled() {
@@ -1098,46 +1091,4 @@ func (e *MVCCEngine) GetIndex(tableName, indexName string) (storage.Index, error
 	}
 
 	return nil, fmt.Errorf("index %s not found on table %s", indexName, tableName)
-}
-
-// AcquireTableLock acquires lock on a table
-func (e *MVCCEngine) AcquireTableLock(name string) {
-	if !e.open.Load() {
-		return // Engine not open, nothing to lock
-	}
-
-	// Normalize to lowercase for case-insensitive lookup
-	name = strings.ToLower(name)
-
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	// Get the table mutex or create a new one if it doesn't exist
-	if mutex, exists := e.tableMu[name]; exists {
-		mutex.Lock()
-		return
-	}
-
-	log.Printf("Warning: Attempted to lock non-existent table %s\n", name)
-}
-
-// ReleaseTableLock releases lock on a table
-func (e *MVCCEngine) ReleaseTableLock(name string) {
-	if !e.open.Load() {
-		return // Engine not open, nothing to unlock
-	}
-
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	// Normalize to lowercase for case-insensitive lookup
-	name = strings.ToLower(name)
-
-	// Check if the table mutex exists before unlocking
-	if mutex, exists := e.tableMu[name]; exists {
-		mutex.Unlock()
-		return
-	}
-
-	log.Printf("Warning: Attempted to unlock non-existent table %s\n", name)
 }

@@ -6,27 +6,27 @@ order: 1
 
 # MVCC Implementation
 
-This document provides a detailed explanation of Stoolap's Multi-Version Concurrency Control (MVCC) implementation, which enables transaction isolation with minimal locking.
+This document provides a detailed explanation of Stoolap's Multi-Version Concurrency Control (MVCC) implementation, which enables transaction isolation without locking.
 
 ## MVCC Overview
 
 Multi-Version Concurrency Control (MVCC) is a concurrency control method used by Stoolap to provide transaction isolation. The key principles are:
 
-1. Maintain the latest committed version of each row (single-version design)
+1. Maintain full version chains for each row with unlimited history
 2. Track deletion status with transaction IDs for proper visibility
 3. Each transaction has a consistent view based on visibility rules
 4. Reads never block writes, and writes never block reads
-5. Implement optimistic concurrency control for conflict detection in SNAPSHOT isolation
+5. Implement optimistic concurrency control for conflict detection
 
 ## Design Philosophy
 
-Stoolap implements a **single-version MVCC** design, which differs from traditional multi-version systems:
+Stoolap implements a **true multi-version MVCC** design:
 
-- **Single Version Per Row**: Only the latest committed version is kept in memory
-- **Deletion Tracking**: Deleted rows are marked with `DeletedAtTxnID` rather than removed
-- **Transaction ID Preservation**: Updates preserve the original creator's transaction ID
-- **Memory Efficiency**: Reduced memory footprint compared to full multi-version systems
-- **Simplified Garbage Collection**: Deleted rows can be cleaned up after visibility expires
+- **Full Version Chains**: Unlimited version history per row linked via `prev` pointers
+- **In-Memory Chains**: Version chains built from WAL replay during recovery
+- **Immutable Versions**: New versions always created, never modified in place
+- **Efficient Persistence**: Only latest version persisted to disk snapshots
+- **Automatic Cleanup**: Old versions garbage collected when no longer needed
 
 ## Core Components
 
@@ -40,11 +40,11 @@ Stoolap implements a **single-version MVCC** design, which differs from traditio
 
 ### Version Store
 
-- Maintains single latest version of each row
+- Maintains full version chains for each row
 - Tracks both creation (`TxnID`) and deletion (`DeletedAtTxnID`) transaction IDs
 - Implements efficient concurrent access using segment maps
 - Manages columnar and bitmap indexes
-- Provides visibility-aware iteration and retrieval
+- Provides visibility-aware traversal of version chains
 
 ### Row Version Structure
 
@@ -55,8 +55,11 @@ type RowVersion struct {
     Data           storage.Row // Complete row data
     RowID          int64       // Row identifier
     CreateTime     int64       // Timestamp when created
+    prev           *RowVersion // Previous version in the chain
 }
 ```
+
+The `prev` pointer creates a backward-linked chain from newest to oldest version.
 
 ## Transaction IDs and Timestamps
 
@@ -90,8 +93,8 @@ func IsDirectlyVisible(versionTxnID int64) bool {
 
 - Transactions see a consistent snapshot from when they started
 - Write-write conflict detection prevents lost updates
-- Serialized commits via global mutex ensure correctness
-- Lower throughput but stronger consistency guarantees
+- Lock-free commits with optimistic concurrency control
+- High throughput with strong consistency guarantees
 
 Implementation:
 ```go
@@ -108,28 +111,28 @@ func IsVisible(versionTxnID, viewerTxnID int64) bool {
 
 ## Visibility Rules
 
+### Version Chain Traversal
+
+Visibility is determined by traversing the version chain:
+```go
+// Traverse the version chain from newest to oldest
+for current := versionPtr; current != nil; current = current.prev {
+    if registry.IsVisible(current.TxnID, txnID) {
+        // Check deletion visibility
+        if current.DeletedAtTxnID != 0 && 
+           registry.IsVisible(current.DeletedAtTxnID, txnID) {
+            return nil, false // Deleted
+        }
+        return current, true // Found visible version
+    }
+}
+```
+
 ### Row Visibility
 
 A row is visible to a transaction if:
-1. The row was created by a visible transaction, AND
-2. The row was NOT deleted, OR the deletion is not visible
-
-### Deletion Visibility
-
-With `DeletedAtTxnID` tracking:
-```go
-// Check if row is visible considering deletion
-if versionPtr.DeletedAtTxnID != 0 {
-    // Check if deletion is visible
-    deletionVisible := registry.IsVisible(versionPtr.DeletedAtTxnID, txnID)
-    if versionPtr.DeletedAtTxnID != txnID && deletionVisible {
-        // Deletion is visible, skip this row
-        return false
-    }
-}
-// Row is visible (not deleted or deletion not visible)
-return true
-```
+1. A version exists in the chain that was created by a visible transaction, AND
+2. That version was NOT deleted, OR the deletion is not visible
 
 ### Transaction-Specific Isolation
 
@@ -158,41 +161,46 @@ if versionStore.CheckWriteConflict(writtenRows, beginSeq) {
 versionStore.SetWriteSequences(writtenRows, commitSeq)
 ```
 
-### Commit Synchronization
+### Lock-Free Commit Process
 
-SNAPSHOT commits are serialized to prevent race conditions:
-1. Acquire global commit mutex
-2. Check for write-write conflicts
-3. Generate commit sequence
-4. Apply changes to version stores
-5. Set write sequences atomically
-6. Mark transaction as committed
-7. Release mutex
+SNAPSHOT commits use optimistic concurrency control:
+1. Check for write-write conflicts
+2. Generate commit sequence
+3. Apply changes to version stores (creating new versions)
+4. Set write sequences atomically
+5. Mark transaction as committed
 
-## Single-Version Design Implications
+No global mutex needed - conflicts detected through version checks.
+
+## Version Chain Management
 
 ### Updates
 
 When a row is updated:
-- The new data replaces the old data
-- The original `TxnID` is preserved (non-standard MVCC behavior)
-- Previous versions are not accessible
-- This limits true point-in-time queries
+- A new version is created with the updating transaction's ID
+- The new version's `prev` pointer links to the current version
+- The version chain grows backward in time
+- All historical versions remain accessible
 
 ### Deletions
 
 When a row is deleted:
-- The row remains in the version store
-- `DeletedAtTxnID` is set to the deleting transaction's ID
-- Data is preserved for transactions that need visibility
-- Garbage collection eventually removes invisible deleted rows
+- A new version is created with `DeletedAtTxnID` set
+- The deletion version links to the previous version
+- Data is preserved in the deletion version
+- The row appears deleted to transactions that see this version
 
-### Limitations
+### Version Chain Example
 
-1. **No Historical Versions**: Cannot query past states beyond current snapshot
-2. **Update Visibility**: Updates immediately replace data for all future viewers
-3. **No Savepoints**: Transaction savepoints not supported
-4. **Limited Isolation Levels**: Only READ COMMITTED and SNAPSHOT
+```
+[Newest] -> Version 3 (TxnID=300, DeletedAt=400) 
+              |
+              v
+            Version 2 (TxnID=200)
+              |
+              v
+            Version 1 (TxnID=100) -> [Oldest]
+```
 
 ## Performance Optimizations
 
@@ -217,32 +225,41 @@ When a row is deleted:
 
 ### Memory Management
 
-- Single version reduces memory footprint
-- Efficient row representation
+- Version chains built on-demand from WAL
+- Automatic cleanup of old versions no longer needed
 - Periodic cleanup of deleted rows
 - Cold data eviction to disk
 
 ## Garbage Collection
 
-Deleted rows are cleaned up based on:
+### Version Chain Cleanup
+
+Old versions in chains are cleaned up when:
+1. No active transaction can see them
+2. A newer version is visible to all active transactions
+
+```go
+// Find oldest version still needed
+for current := version; current != nil; current = current.prev {
+    for _, txnID := range activeTransactions {
+        if registry.IsVisible(current.TxnID, txnID) {
+            lastNeeded = current
+            break
+        }
+    }
+}
+// Disconnect older versions
+if lastNeeded != nil && lastNeeded.prev != nil {
+    lastNeeded.prev = nil // GC will reclaim older versions
+}
+```
+
+### Deleted Row Cleanup
+
+Deleted rows are removed based on:
 1. Retention period (age-based)
 2. Transaction visibility (no active transaction can see them)
 3. Safety checks to prevent removing visible data
-
-```go
-func canSafelyRemove(version *RowVersion) bool {
-    // Check if any active transaction can see this deleted row
-    for _, txnID := range activeTransactions {
-        if registry.IsVisible(version.TxnID, txnID) {
-            if !registry.IsVisible(version.DeletedAtTxnID, txnID) {
-                // Row still visible to this transaction
-                return false
-            }
-        }
-    }
-    return true
-}
-```
 
 ## Key Implementation Files
 
@@ -263,8 +280,8 @@ func canSafelyRemove(version *RowVersion) bool {
 ## Future Improvements
 
 Potential enhancements to the current design:
-1. **Multi-Version Storage**: Keep multiple versions for better SNAPSHOT performance
-2. **Row-Level Locking**: Replace global mutex with fine-grained locks
-3. **Additional Isolation Levels**: REPEATABLE READ, SERIALIZABLE
+1. **Time Travel Queries**: Query data as of specific timestamps
+2. **Additional Isolation Levels**: REPEATABLE READ, SERIALIZABLE
+3. **Read-Set Tracking**: Detect read-write conflicts for SERIALIZABLE
 4. **Savepoint Support**: Transaction savepoints for partial rollbacks
-5. **Historical Queries**: Time-travel queries with version retention
+5. **Version Compression**: Delta encoding for version chains

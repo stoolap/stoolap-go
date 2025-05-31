@@ -35,12 +35,15 @@ type TransactionRegistry struct {
 	nextTxnID                 atomic.Int64
 	activeTransactions        *fastmap.SegmentInt64Map[int64] // txnID -> begin sequence number
 	committedTransactions     *fastmap.SegmentInt64Map[int64] // txnID -> commit sequence number
+	committingTransactions    *fastmap.SegmentInt64Map[int64] // txnID -> commit sequence number (in committing state)
 	globalIsolationLevel      storage.IsolationLevel
 	transactionIsolationLevel map[int64](storage.IsolationLevel) // Per-transaction isolation level
 	accepting                 atomic.Bool                        // Flag to control if new transactions are accepted
 	nextSequence              atomic.Int64                       // Single monotonic sequence for both begin and commit
 
 	mu sync.RWMutex // RWMutex for additional safety in some operations
+
+	commitCond *sync.Cond
 }
 
 // NewTransactionRegistry creates a new transaction registry
@@ -48,7 +51,9 @@ func NewTransactionRegistry() *TransactionRegistry {
 	reg := &TransactionRegistry{
 		activeTransactions:        fastmap.NewSegmentInt64Map[int64](8, 1000),
 		committedTransactions:     fastmap.NewSegmentInt64Map[int64](8, 1000),
+		committingTransactions:    fastmap.NewSegmentInt64Map[int64](8, 1000),
 		transactionIsolationLevel: make(map[int64]storage.IsolationLevel, 100), // Preallocate for 100 transactions
+		commitCond:                sync.NewCond(&sync.Mutex{}),
 	}
 	reg.accepting.Store(true) // Start accepting transactions by default
 	return reg
@@ -102,17 +107,25 @@ func (r *TransactionRegistry) GetIsolationLevel(txnID int64) storage.IsolationLe
 }
 
 // BeginTransaction starts a new transaction
-func (r *TransactionRegistry) BeginTransaction() (txnID int64, beginTS int64) {
+func (r *TransactionRegistry) BeginTransaction() (txnID int64, beginSeq int64) {
 	// Check if we're accepting new transactions
 	if !r.accepting.Load() {
 		// Return InvalidTransactionID to indicate error condition
 		return InvalidTransactionID, 0
 	}
 
+	r.commitCond.L.Lock() // Lock to ensure no committing transactions are in progress
+	defer r.commitCond.L.Unlock()
+
+	for r.committingTransactions.Len() != 0 {
+		// Wait for all committing transactions to finish
+		r.commitCond.Wait()
+	}
+
 	// Generate a new transaction ID atomically
 	txnID = r.nextTxnID.Add(1)
-	// Use monotonic sequence instead of wall-clock time
-	beginSeq := r.nextSequence.Add(1)
+	// Use monotonic sequence
+	beginSeq = r.nextSequence.Add(1)
 
 	// Record the transaction (thread-safe with SegmentInt64Map)
 	r.activeTransactions.Set(txnID, beginSeq)
@@ -120,10 +133,47 @@ func (r *TransactionRegistry) BeginTransaction() (txnID int64, beginTS int64) {
 	return txnID, beginSeq
 }
 
-// CommitTransaction commits a transaction
+// StartCommit begins the commit process for a transaction
+// This puts the transaction into "committing" state - it's no longer active
+// but not yet fully committed. Changes won't be visible to other transactions yet.
+func (r *TransactionRegistry) StartCommit(txnID int64) int64 {
+	r.commitCond.L.Lock()
+	defer r.commitCond.L.Unlock()
+
+	// Get the commit sequence
+	commitSeq := r.nextSequence.Add(1)
+
+	// Move from active to committing state
+	r.activeTransactions.Del(txnID)
+	r.committingTransactions.Set(txnID, commitSeq)
+
+	return commitSeq
+}
+
+// CompleteCommit completes the commit process for a transaction
+// This moves the transaction from "committing" to "committed" state
+// making all its changes atomically visible to other transactions
+func (r *TransactionRegistry) CompleteCommit(txnID int64) {
+	r.commitCond.L.Lock() // Lock to ensure no committing transactions are in progress
+	// Get the commit sequence from committing state
+	commitSeq, exists := r.committingTransactions.Get(txnID)
+	if !exists {
+		// Transaction not in committing state - this is an error
+		// but we'll handle it gracefully by using current sequence
+		commitSeq = r.nextSequence.Load()
+	}
+
+	// Move from committing to committed state
+	r.committingTransactions.Del(txnID)
+	r.committedTransactions.Set(txnID, commitSeq)
+	r.commitCond.L.Unlock()
+
+	r.commitCond.Broadcast() // Notify any waiting threads that commit is done
+}
+
+// CommitTransaction commits a transaction for read-only transactions
 func (r *TransactionRegistry) CommitTransaction(txnID int64) int64 {
-	// Use monotonic sequence instead of wall-clock time
-	// This ensures consistent ordering even with clock skew or low timer resolution
+	// This ensures consistent ordering with atomic sequence
 	commitSeq := r.nextSequence.Add(1)
 
 	// First remove from active transactions to avoid deadlock
@@ -137,10 +187,9 @@ func (r *TransactionRegistry) CommitTransaction(txnID int64) int64 {
 }
 
 // RecoverCommittedTransaction recreates a committed transaction during recovery
-func (r *TransactionRegistry) RecoverCommittedTransaction(txnID int64, commitTS int64) {
+func (r *TransactionRegistry) RecoverCommittedTransaction(txnID int64, commitSeq int64) {
 	// During recovery, we directly add the transaction to the committed map
-	// with its original commit timestamp
-	r.committedTransactions.Set(txnID, commitTS)
+	r.committedTransactions.Set(txnID, commitSeq)
 
 	// Also update nextTxnID if necessary to ensure new transactions get unique IDs
 	for {
@@ -177,19 +226,28 @@ func (r *TransactionRegistry) RecoverAbortedTransaction(txnID int64) {
 
 // AbortTransaction marks a transaction as aborted
 func (r *TransactionRegistry) AbortTransaction(txnID int64) {
-	// Lock-free delete with SegmentInt64Map
+	// Remove from whatever state it's in
 	r.activeTransactions.Del(txnID)
-	// No entry in committedTransactions means it was aborted
+
+	// Check if we need to notify
+	if r.committingTransactions.Has(txnID) {
+		r.commitCond.L.Lock()
+		r.committingTransactions.Del(txnID)
+		r.commitCond.L.Unlock()
+
+		// Notify any waiting threads that commit is done
+		r.commitCond.Broadcast()
+	}
 }
 
-// GetCommitTimestamp gets the commit timestamp for a transaction
-func (r *TransactionRegistry) GetCommitTimestamp(txnID int64) (int64, bool) {
+// GetCommitTimestamp gets the commit sequence for a transaction
+func (r *TransactionRegistry) GetCommitSequence(txnID int64) (int64, bool) {
 	// Thread-safe get with SegmentInt64Map
 	return r.committedTransactions.Get(txnID)
 }
 
-// GetTransactionBeginTime gets the begin timestamp for a transaction
-func (r *TransactionRegistry) GetTransactionBeginSeq(txnID int64) int64 {
+// GetTransactionBeginTime gets the begin sequence for a transaction
+func (r *TransactionRegistry) GetTransactionBeginSequence(txnID int64) int64 {
 	// Thread-safe get with SegmentInt64Map
 	beginSeq, exists := r.activeTransactions.Get(txnID)
 	if exists {
@@ -215,8 +273,12 @@ func (r *TransactionRegistry) IsDirectlyVisible(versionTxnID int64) bool {
 		return true
 	}
 
-	// In READ COMMITTED mode, only committed transactions are visible
-	// This is a hot path that benefits from being as fast as possible
+	// Check if transaction is in committing state - these are NOT visible
+	if r.committingTransactions.Has(versionTxnID) {
+		return false
+	}
+
+	// In READ COMMITTED mode, only FULLY committed transactions are visible
 	return r.committedTransactions.Has(versionTxnID)
 }
 
@@ -241,33 +303,25 @@ func (r *TransactionRegistry) IsVisible(versionTxnID int64, viewerTxnID int64) b
 		return r.IsDirectlyVisible(versionTxnID)
 	}
 
-	// For SNAPSHOT isolation, we need full visibility check
-	// All operations are thread-safe with SegmentInt64Map
+	// Check if transaction is in committing state - these are NOT visible
+	if r.committingTransactions.Has(versionTxnID) {
+		return false
+	}
 
 	// Transaction can only see committed changes from other transactions
-	// Lock-free access via SegmentInt64Map
-	commitTS, committed := r.committedTransactions.Get(versionTxnID)
+	commitSeq, committed := r.committedTransactions.Get(versionTxnID)
 	if !committed {
 		// Not committed, definitely not visible
 		return false
 	}
 
 	// For Snapshot Isolation, version must be committed before viewer began
-	// Lock-free access via SegmentInt64Map
-	viewerBeginTS, viewerActive := r.activeTransactions.Get(viewerTxnID)
+	viewerBeginSeq, viewerActive := r.activeTransactions.Get(viewerTxnID)
 	if !viewerActive {
-		// Viewer transaction isn't active, use its commit time
-		// Lock-free access via SegmentInt64Map
-		viewerBeginTS, committed = r.committedTransactions.Get(viewerTxnID)
-		if !committed {
-			// If viewer isn't committed or active, it must be aborted
-			return false
-		}
+		return false // Viewer transaction is not active, cannot see anything
 	}
 
-	// Version must have been committed before or at the same time viewer began
-	// This timestamp comparison is the core of snapshot isolation
-	return commitTS <= viewerBeginTS
+	return commitSeq <= viewerBeginSeq
 }
 
 // CleanupOldTransactions removes committed transactions older than maxAge
@@ -299,7 +353,7 @@ func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 		// Collect all active transaction IDs into our map
 		// This is done in a separate loop to avoid nested locks
 		txnIDs := make([]int64, 0, 100)
-		r.activeTransactions.ForEach(func(txnID, beginTS int64) bool {
+		r.activeTransactions.ForEach(func(txnID, beginSeq int64) bool {
 			txnIDs = append(txnIDs, txnID)
 			return true
 		})
@@ -317,7 +371,7 @@ func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 	txnsToRemove := make([]int64, 0, 100)
 
 	// Find transactions to remove
-	r.committedTransactions.ForEach(func(txnID, commitTS int64) bool {
+	r.committedTransactions.ForEach(func(txnID, commitSeq int64) bool {
 		// NEVER clean up negative transaction IDs
 		// These are special transactions (like recovery) that must remain visible
 		if txnID < 0 {
@@ -332,7 +386,7 @@ func (r *TransactionRegistry) CleanupOldTransactions(maxAge time.Duration) int {
 		}
 
 		// Only mark transactions older than the cutoff
-		if commitTS < cutoffTime {
+		if commitSeq < cutoffTime {
 			txnsToRemove = append(txnsToRemove, txnID)
 		}
 		return true
@@ -360,7 +414,7 @@ func (r *TransactionRegistry) WaitForActiveTransactions(timeout time.Duration) i
 
 		// Count active transactions - SegmentInt64Map is already thread-safe
 		activeCount := 0
-		r.activeTransactions.ForEach(func(txnID, beginTS int64) bool {
+		r.activeTransactions.ForEach(func(txnID, beginSeq int64) bool {
 			activeCount++
 			return true
 		})
@@ -376,7 +430,7 @@ func (r *TransactionRegistry) WaitForActiveTransactions(timeout time.Duration) i
 
 	// Return the number of transactions still active after timeout
 	activeCount := 0
-	r.activeTransactions.ForEach(func(txnID, beginTS int64) bool {
+	r.activeTransactions.ForEach(func(txnID, beginSeq int64) bool {
 		activeCount++
 		return true
 	})

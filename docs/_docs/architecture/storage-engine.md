@@ -79,10 +79,11 @@ When persistence is enabled, data is stored on disk with:
 
 The storage engine uses MVCC to provide transaction isolation:
 
-- **Row Versioning** - Multiple versions of each row are maintained
+- **Full Version Chains** - Unlimited version history per row linked via pointers
 - **Transaction IDs** - Each version is associated with a transaction ID
-- **Visibility Rules** - Determine which versions are visible to each transaction
-- **Garbage Collection** - Old versions are cleaned up when no longer needed
+- **Visibility Rules** - Traverse version chains to find visible versions
+- **Lock-Free Design** - No table-level locks, optimistic concurrency control
+- **Automatic Cleanup** - Old versions garbage collected when no longer needed
 
 For more details, see the [MVCC Implementation](mvcc-implementation.md) and [Transaction Isolation](transaction-isolation.md) documentation.
 
@@ -122,10 +123,10 @@ When data is inserted:
 
 When data is updated:
 
-1. The existing row versions are located
-2. Visibility rules determine which versions to update
-3. New row versions are created with updated values
-4. Old versions are marked as deleted by the current transaction
+1. The existing row is located via indexes or scan
+2. A new version is created with updated values
+3. The new version's `prev` pointer links to the current version
+4. The version chain grows backward in time
 5. Indexes are updated to reflect the changes
 6. The operation is recorded in the WAL (if enabled)
 
@@ -133,11 +134,12 @@ When data is updated:
 
 When data is deleted:
 
-1. The existing row versions are located
-2. Visibility rules determine which versions to delete
-3. Matched versions are marked as deleted by the current transaction
-4. Indexes are updated to reflect the deletions
-5. The operation is recorded in the WAL (if enabled)
+1. The existing row is located via indexes or scan
+2. A new version is created with `DeletedAtTxnID` set
+3. The deletion version links to the previous version
+4. Data is preserved in the deletion version
+5. Indexes are updated to reflect the deletion
+6. The operation is recorded in the WAL (if enabled)
 
 ## Persistence and Recovery
 
@@ -153,9 +155,10 @@ When persistence is enabled:
 ### Snapshots
 
 1. Periodically, consistent snapshots of tables are created
-2. Snapshots represent a point-in-time state of each table
-3. Multiple snapshots may be retained for safety
-4. Snapshots accelerate recovery compared to replaying the entire WAL
+2. Snapshots contain only the latest version of each row
+3. Version chains are rebuilt from WAL replay during recovery
+4. Multiple snapshots may be retained for safety
+5. Snapshots accelerate recovery compared to replaying the entire WAL
 
 ### Recovery Process
 

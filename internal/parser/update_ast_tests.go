@@ -19,11 +19,6 @@ limitations under the License.
 package main
 
 import (
-	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/printer"
-	"go/token"
 	"io/ioutil"
 	"strings"
 )
@@ -68,6 +63,4 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
-	fmt.Println("Test file updated successfully!")
 }

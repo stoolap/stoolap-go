@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/stoolap/stoolap/internal/functions/aggregate"
+	"github.com/stoolap/stoolap/internal/functions/contract"
 	"github.com/stoolap/stoolap/internal/parser"
 	"github.com/stoolap/stoolap/internal/storage"
 )
@@ -772,19 +774,37 @@ func (e *Executor) executeGlobalAggregation(ctx context.Context, tx storage.Tran
 	// Compute each aggregation function
 	resultValues := make([]interface{}, len(aggregations))
 
-	// Initialize aggregation state
+	// Initialize aggregation state and create new function instances
+	aggFuncInstances := make([]contract.AggregateFunction, len(aggregations))
 	for i, agg := range aggregations {
 		if agg.Name == "COUNT" {
 			resultValues[i] = int64(0)
 		} else {
-			// For SUM, AVG, MIN, MAX we'll use the function registry
-			// Get the function from the registry
-			if e.functionRegistry != nil {
-				aggFunc := e.functionRegistry.GetAggregateFunction(strings.ToUpper(agg.Name))
-				if aggFunc != nil {
-					aggFunc.Reset() // Start a fresh accumulation
+			// Create new instances for each aggregate function to avoid concurrency issues
+			var aggFunc contract.AggregateFunction
+			switch strings.ToUpper(agg.Name) {
+			case "SUM":
+				aggFunc = aggregate.NewSumFunction()
+			case "AVG":
+				aggFunc = aggregate.NewAvgFunction()
+			case "MIN":
+				aggFunc = aggregate.NewMinFunction()
+			case "MAX":
+				aggFunc = aggregate.NewMaxFunction()
+			case "FIRST":
+				aggFunc = aggregate.NewFirstFunction()
+			case "LAST":
+				aggFunc = aggregate.NewLastFunction()
+			default:
+				// For unknown functions, try the registry (though this is not ideal for concurrency)
+				if e.functionRegistry != nil {
+					aggFunc = e.functionRegistry.GetAggregateFunction(strings.ToUpper(agg.Name))
+					if aggFunc != nil {
+						aggFunc.Reset()
+					}
 				}
 			}
+			aggFuncInstances[i] = aggFunc
 		}
 	}
 
@@ -849,23 +869,20 @@ func (e *Executor) executeGlobalAggregation(ctx context.Context, tx storage.Tran
 					}
 				}
 			} else {
-				// For other aggregate functions, accumulate using the function registry
-				if e.functionRegistry != nil {
-					aggFunc := e.functionRegistry.GetAggregateFunction(strings.ToUpper(agg.Name))
-					if aggFunc != nil {
-						// Find the column index based on name
-						colIndex := -1
-						for j, colName := range neededColumns {
-							if colName == agg.Column {
-								colIndex = j
-								break
-							}
+				// For other aggregate functions, use the stored instance
+				if aggFuncInstances[i] != nil {
+					// Find the column index based on name
+					colIndex := -1
+					for j, colName := range neededColumns {
+						if colName == agg.Column {
+							colIndex = j
+							break
 						}
+					}
 
-						// If column found, accumulate the value
-						if colIndex >= 0 && colIndex < len(row) {
-							aggFunc.Accumulate(row[colIndex].AsInterface(), agg.IsDistinct)
-						}
+					// If column found, accumulate the value
+					if colIndex >= 0 && colIndex < len(row) {
+						aggFuncInstances[i].Accumulate(row[colIndex].AsInterface(), agg.IsDistinct)
 					}
 				}
 			}
@@ -886,12 +903,9 @@ func (e *Executor) executeGlobalAggregation(ctx context.Context, tx storage.Tran
 				distinctMapPool.Put(distinctMap)
 			}
 		} else if agg.Name != "COUNT" {
-			// For other aggregate functions, get the final result
-			if e.functionRegistry != nil {
-				aggFunc := e.functionRegistry.GetAggregateFunction(strings.ToUpper(agg.Name))
-				if aggFunc != nil {
-					resultValues[i] = aggFunc.Result()
-				}
+			// For other aggregate functions, get the final result from stored instance
+			if aggFuncInstances[i] != nil {
+				resultValues[i] = aggFuncInstances[i].Result()
 			}
 		}
 	}

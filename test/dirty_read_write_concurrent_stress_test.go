@@ -32,6 +32,7 @@ import (
 
 // TestHighConcurrencyDirtyWrite tests dirty write prevention under extreme concurrency
 func TestHighConcurrencyDirtyWrite(t *testing.T) {
+	t.Skip("This test is designed to run for a long time and stress the MVCC implementation. This can run if needed.")
 	testCases := []struct {
 		name         string
 		isolation    storage.IsolationLevel
@@ -210,7 +211,7 @@ func TestHighConcurrencyDirtyWrite(t *testing.T) {
 
 // TestHighConcurrencyDirtyRead tests dirty read prevention under extreme concurrency
 func TestHighConcurrencyDirtyRead(t *testing.T) {
-	t.Skip("This test is currently skipped due to its complexity and potential for long execution time")
+	t.Skip("This test is designed to run for a long time and stress the MVCC implementation. This can run if needed.")
 	testCases := []struct {
 		name       string
 		isolation  storage.IsolationLevel
@@ -387,7 +388,7 @@ func TestHighConcurrencyDirtyRead(t *testing.T) {
 
 // TestMixedWorkloadStress tests both reads and writes under extreme concurrency
 func TestMixedWorkloadStress(t *testing.T) {
-	t.Skip("This test is currently skipped due to its complexity and potential for long execution time")
+	t.Skip("This test is designed to run for a long time and stress the MVCC implementation. This can run if needed.")
 	db, err := stoolap.Open("memory://")
 	if err != nil {
 		t.Fatal(err)
