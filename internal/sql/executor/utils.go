@@ -26,7 +26,7 @@ import (
 // convertDataTypeFromString converts a string data type to storage.DataType
 func convertDataTypeFromString(typeStr string) (storage.DataType, error) {
 	switch strings.ToUpper(typeStr) {
-	case "INT", "INTEGER":
+	case "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT":
 		return storage.INTEGER, nil
 	case "FLOAT", "REAL", "DOUBLE":
 		return storage.FLOAT, nil

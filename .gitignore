@@ -5,7 +5,7 @@ works
 CLAUDE.md
 TODO.md
 cmd/stoolap/stoolap
-cmd/stoolap/stoolap.db
+cmd/stoolap-pgserver/stoolap-pgserver
 stoolap.wiki/
 scripts/
 coverage.txt

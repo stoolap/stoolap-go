@@ -97,7 +97,7 @@ func TestEnhancedLexer_Numbers(t *testing.T) {
 }
 
 func TestEnhancedLexer_Strings(t *testing.T) {
-	input := `'simple string' "double quoted" 'escaped \' quote' "escaped \" quote" 'multi
+	input := `'simple string' "double quoted" 'escaped \' quote' "column name" 'multi
 line'`
 
 	tests := []struct {
@@ -105,9 +105,9 @@ line'`
 		expectedLiteral string
 	}{
 		{TokenString, "'simple string'"},
-		{TokenString, "\"double quoted\""},
+		{TokenIdentifier, "double quoted"}, // Double quotes now create identifiers
 		{TokenString, "'escaped \\' quote'"},
-		{TokenString, "\"escaped \\\" quote\""},
+		{TokenIdentifier, "column name"}, // Double quotes now create identifiers
 		{TokenString, "'multi\nline'"},
 		{TokenEOF, ""},
 	}

@@ -91,10 +91,6 @@ func (tt TokenType) String() string {
 		return "PUNCTUATOR"
 	case TokenComment:
 		return "COMMENT"
-	case TokenDate:
-		return "DATE"
-	case TokenTime:
-		return "TIME"
 	case TokenTimestamp:
 		return "TIMESTAMP"
 	case TokenParameter:
@@ -188,7 +184,10 @@ var Keywords = map[string]bool{
 	"FLOAT":       true,
 	"TEXT":        true,
 	"BOOLEAN":     true,
+	"BOOL":        true,
 	"TIMESTAMP":   true,
+	"TIMESTAMPTZ": true,
+	"DATETIME":    true,
 	"DATE":        true,
 	"TIME":        true,
 	"JSON":        true,
@@ -245,7 +244,13 @@ var Keywords = map[string]bool{
 	"RENAME":      true,
 	"TO":          true,
 	"VARCHAR":     true,
+	"CHAR":        true,
+	"STRING":      true,
 	"BIGINT":      true,
+	"TINYINT":     true,
+	"SMALLINT":    true,
+	"REAL":        true,
+	"DOUBLE":      true,
 	"INT":         true,
 	"ISOLATION":   true,
 	"LEVEL":       true,
@@ -352,40 +357,20 @@ func (l *Lexer) NextToken() Token {
 		tok.Type = TokenEOF
 		tok.Literal = ""
 
-	case l.ch == '\'' || l.ch == '"':
-		// String literal
+	case l.ch == '\'':
+		// String literal (single quotes)
 		tok.Type = TokenString
 		tok.Literal = l.readStringLiteral()
 
-	case l.ch == '`':
-		// Backtick-quoted identifier (for GORM compatibility)
+	case l.ch == '"':
+		// Double-quoted identifier (SQL standard)
 		tok.Type = TokenIdentifier
+		tok.Literal = l.readQuotedIdentifier('"')
 
-		// Save the start of the identifier
-		var result strings.Builder
-		result.WriteRune(l.ch) // Include the opening backtick
-
-		l.readChar() // consume opening backtick
-
-		// Read until closing backtick
-		for l.ch != '`' && l.ch != 0 {
-			result.WriteRune(l.ch)
-			l.readChar()
-		}
-
-		// Consume closing backtick if not EOF
-		if l.ch == '`' {
-			result.WriteRune(l.ch) // Include the closing backtick
-			l.readChar()
-		} else {
-			l.lastError = "unterminated backtick identifier"
-			// For unterminated backticks, add a closing backtick
-			result.WriteRune('`')
-		}
-
-		// Remove backticks to get the actual identifier
-		quoted := result.String()
-		tok.Literal = quoted[1 : len(quoted)-1]
+	case l.ch == '`':
+		// Backtick-quoted identifier (MySQL style)
+		tok.Type = TokenIdentifier
+		tok.Literal = l.readQuotedIdentifier('`')
 
 	case l.ch == '-' && unicode.IsDigit(l.peekChar()):
 		// Negative number
@@ -649,6 +634,38 @@ func (l *Lexer) readStringLiteral() string {
 		l.lastError = "unterminated string literal"
 		// For unterminated strings, add a closing quote to match expectations
 		result.WriteRune(quote)
+	}
+
+	return result.String()
+}
+
+// readQuotedIdentifier reads a quoted identifier (double quotes or backticks)
+func (l *Lexer) readQuotedIdentifier(quote rune) string {
+	var result strings.Builder
+
+	l.readChar() // consume opening quote
+
+	// Read until closing quote
+	for l.ch != 0 {
+		// Handle doubled quotes as escape (e.g., "abc""def" -> abc"def)
+		if l.ch == quote && l.peekChar() == quote {
+			result.WriteRune(l.ch)
+			l.readChar() // consume first quote
+			l.readChar() // consume second quote
+		} else if l.ch == quote {
+			// Found closing quote
+			break
+		} else {
+			result.WriteRune(l.ch)
+			l.readChar()
+		}
+	}
+
+	// Consume closing quote if not EOF
+	if l.ch == quote {
+		l.readChar()
+	} else {
+		l.lastError = fmt.Sprintf("unterminated quoted identifier starting with %c", quote)
 	}
 
 	return result.String()
