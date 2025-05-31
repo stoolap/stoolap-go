@@ -23,7 +23,7 @@ const (
 	// VersionPatch is the patch version of the driver
 	VersionPatch = "8"
 	// VersionSuffix is the suffix of the driver version
-	VersionSuffix = "d0d4e28d" // git commit hash
+	VersionSuffix = "58d0c016" // git commit hash
 
 	// VersionString is the version string of the driver
 	VersionString = "Stoolap v" + VersionMajor + "." + VersionMinor + "." + VersionPatch + "-" + VersionSuffix
