@@ -101,7 +101,7 @@ func (a *DiskAppender) Close() error {
 
 		fileName := a.file.Name() // Store the filename before closing
 		closeErr := a.file.Close()
-		
+
 		// On Windows, give time for file handles to be released
 		releaseFileHandles()
 

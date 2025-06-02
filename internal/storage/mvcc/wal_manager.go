@@ -497,7 +497,7 @@ func (wm *WALManager) Close() error {
 
 		// Clear reference regardless of outcome
 		wm.walFile = nil
-		
+
 		// On Windows, give time for file handles to be released
 		releaseFileHandles()
 
