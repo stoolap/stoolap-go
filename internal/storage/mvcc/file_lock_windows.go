@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -68,4 +69,11 @@ func acquireLock(file *os.File) error {
 	}
 
 	return nil
+}
+
+// releaseFileHandles is called after closing files on Windows to ensure handles are released
+func releaseFileHandles() {
+	// Windows file handles may take a moment to be fully released
+	// This small delay helps prevent "file in use" errors during cleanup
+	time.Sleep(100 * time.Millisecond)
 }
