@@ -19,18 +19,24 @@ package common
 import (
 	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
 
 // TempDir creates a temporary directory that is cleaned up when the test ends.
-// Unlike common.TempDir(t), this ensures cleanup happens with proper timing for Windows.
-// It uses t.Cleanup() to register cleanup that runs before common.TempDir(t) cleanup.
+// Unlike t.TempDir(), this ensures cleanup happens with proper timing for Windows.
+// It uses t.Cleanup() to register cleanup that runs before t.TempDir() cleanup.
 func TempDir(t *testing.T) string {
 	t.Helper()
 
 	// Create temp dir with test name for uniqueness
-	prefix := "stoolap-" + t.Name() + "-"
+	// Replace path separators with underscores to avoid issues with subtest names
+	testName := t.Name()
+	for _, char := range []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"} {
+		testName = strings.ReplaceAll(testName, char, "_")
+	}
+	prefix := "stoolap-" + testName + "-"
 	dir, err := os.MkdirTemp("", prefix)
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
