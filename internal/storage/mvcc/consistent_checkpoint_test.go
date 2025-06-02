@@ -21,16 +21,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/storage"
 )
 
 func TestConsistentCheckpoint(t *testing.T) {
 	// Create a temporary directory for testing
-	testDir, err := os.MkdirTemp("", "test-checkpoint-*")
-	if err != nil {
-		t.Fatalf("Failed to create test directory: %v", err)
-	}
-	defer os.RemoveAll(testDir)
+	testDir := common.TempDir(t)
 
 	// Create a WAL manager with basic configuration
 	config := storage.PersistenceConfig{

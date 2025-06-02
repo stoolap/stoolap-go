@@ -150,7 +150,8 @@ func (r *DiskReader) Close() error {
 	defer r.mu.Unlock()
 
 	if r.file != nil {
-		return r.file.Close()
+		err := r.file.Close()
+		return err
 	}
 	return nil
 }

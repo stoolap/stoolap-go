@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/storage"
 	"github.com/stoolap/stoolap/internal/storage/binser"
 )
@@ -37,11 +38,7 @@ const (
 // TestMultipleIndexesSerialization tests the serialization and deserialization of multiple indexes
 func TestMultipleIndexesSerialization(t *testing.T) {
 	// Create temporary directory for the test
-	tmpDir, err := os.MkdirTemp("", "index_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := common.TempDir(t)
 
 	// Create a simple schema for testing
 	schema := &storage.Schema{
@@ -59,7 +56,7 @@ func TestMultipleIndexesSerialization(t *testing.T) {
 
 	// Create a mock engine with schemas
 	engine := NewMVCCEngine(config)
-	err = engine.Open()
+	err := engine.Open()
 	if err != nil {
 		t.Fatalf("Failed to open engine: %v", err)
 	}

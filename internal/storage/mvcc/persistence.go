@@ -1122,6 +1122,11 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 			return err
 		}
 
+		// For UPDATE operations, fix any snapshot versions in the chain
+		if entry.Operation == WALUpdate {
+			pm.fixSnapshotVersions(vs, entry.TableName, entry.RowID, entry.TxnID)
+		}
+
 		vs.AddVersion(entry.RowID, RowVersion{
 			TxnID:          entry.TxnID,
 			DeletedAtTxnID: 0, // Not deleted
@@ -1134,6 +1139,9 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 		// For WAL delete, we should ideally have the row data, but if not available, use nil
 		row, _ := deserializeRow(entry.Data) // Ignore error, use nil if deserialization fails
 
+		// Fix any snapshot versions in the chain before adding delete marker
+		pm.fixSnapshotVersions(vs, entry.TableName, entry.RowID, entry.TxnID)
+
 		vs.AddVersion(entry.RowID, RowVersion{
 			TxnID:          entry.TxnID,
 			DeletedAtTxnID: entry.TxnID, // Deleted by this transaction
@@ -1144,6 +1152,42 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 	}
 
 	return nil
+}
+
+// fixSnapshotVersions ensures snapshot-loaded versions are properly handled during WAL replay.
+// When rows are loaded from snapshots, they have TxnID = -1 which makes them "always visible".
+// This method lazy-loads the row from disk if needed and fixes the TxnID to prevent
+// snapshot versions from remaining visible after DELETE/UPDATE operations.
+func (pm *PersistenceManager) fixSnapshotVersions(vs *VersionStore, tableName string, rowID int64, txnID int64) {
+	headVersion, exists := vs.versions.Get(rowID)
+	if !exists {
+		// Row not in memory - try to load from disk if we have a disk store
+		pm.mu.RLock()
+		_, hasDiskStore := pm.diskStores[tableName]
+		pm.mu.RUnlock()
+
+		if hasDiskStore {
+			// Try to get the row from disk (this will lazy-load from snapshot)
+			_, found := vs.GetVisibleVersion(rowID, txnID)
+			if found {
+				// Now the row should be in memory, get it again
+				headVersion, exists = vs.versions.Get(rowID)
+			}
+		}
+	}
+
+	if exists {
+		// Traverse the version chain to find any snapshot versions
+		current := headVersion
+		for current != nil {
+			if current.TxnID == -1 {
+				// Found a snapshot version - fix its TxnID
+				// Otherwise it will remain visible even after delete/update
+				current.TxnID = 0
+			}
+			current = current.prev
+		}
+	}
 }
 
 // RecordDDLOperation records a DDL operation in the WAL

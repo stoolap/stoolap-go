@@ -378,6 +378,8 @@ type Engine interface {
 	GetConfig() Config
 	// UpdateConfig updates the storage engine configuration
 	UpdateConfig(config Config) error
+	// CreateSnapshot manually triggers snapshot creation for all tables
+	CreateSnapshot() error
 }
 
 // IsolationLevel represents the transaction isolation level

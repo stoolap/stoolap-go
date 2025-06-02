@@ -19,9 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -41,100 +39,8 @@ type Candle struct {
 	Volume float64 `json:"volume"`
 }
 
-// BinanceKline represents the candle data format returned by the Binance API
-type BinanceKline []interface{}
-
-// fetchBinanceKlines downloads candlestick data from Binance API
-func fetchBinanceKlines(symbol, interval string, startTime, endTime time.Time, limit int) ([]Candle, error) {
-	// Prepare the URL
-	url := fmt.Sprintf(
-		"https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=%s&startTime=%d&endTime=%d&limit=%d",
-		symbol,
-		interval,
-		startTime.UTC().UnixMilli(),
-		endTime.UTC().UnixMilli(),
-		limit,
-	)
-
-	// Make the HTTP request
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("error making HTTP request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Check response status code
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API error: %s", string(body))
-	}
-
-	// Read the response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading response body: %v", err)
-	}
-
-	// Unmarshal the JSON response
-	var klines [][]interface{}
-	if err := json.Unmarshal(body, &klines); err != nil {
-		return nil, fmt.Errorf("error unmarshalling response: %v", err)
-	}
-
-	// Convert the Binance klines format to our Candle format
-	candles := make([]Candle, 0, len(klines))
-	for _, k := range klines {
-		// Parse fields from the Binance kline format according to their API docs:
-		// [
-		//   1499040000000,      // [0] Open time
-		//   "0.01634790",       // [1] Open
-		//   "0.80000000",       // [2] High
-		//   "0.01575800",       // [3] Low
-		//   "0.01577100",       // [4] Close
-		//   "148976.11427815",  // [5] Volume
-		//   ... (other fields we don't need)
-		// ]
-		// Parse the timestamp (JSON unmarshals numbers as float64 by default)
-		var openTime int64
-
-		// Handle different possible types from JSON parsing
-		switch v := k[0].(type) {
-		case float64:
-			// Most common case with standard JSON libraries
-			openTime = int64(v)
-		case int64:
-			// Direct int64
-			openTime = v
-		case json.Number:
-			// If using json.Decoder with UseNumber()
-			val, _ := v.Int64()
-			openTime = val
-		default:
-			// Fallback: convert to string and parse
-			openTime, _ = strconv.ParseInt(fmt.Sprintf("%v", k[0]), 10, 64)
-		}
-		openPrice, _ := strconv.ParseFloat(fmt.Sprintf("%v", k[1]), 64)
-		highPrice, _ := strconv.ParseFloat(fmt.Sprintf("%v", k[2]), 64)
-		lowPrice, _ := strconv.ParseFloat(fmt.Sprintf("%v", k[3]), 64)
-		closePrice, _ := strconv.ParseFloat(fmt.Sprintf("%v", k[4]), 64)
-		volume, _ := strconv.ParseFloat(fmt.Sprintf("%v", k[5]), 64)
-
-		// Convert from milliseconds to seconds for Unix timestamp
-		// Important: Binance API returns timestamps in milliseconds, we need to convert to seconds
-		unixTime := openTime / 1000
-
-		candles = append(candles, Candle{
-			Time:   unixTime,
-			Open:   openPrice,
-			High:   highPrice,
-			Low:    lowPrice,
-			Close:  closePrice,
-			Volume: volume,
-		})
-	}
-
-	return candles, nil
-}
+// Kline represents the candle data format returned by the Binance API
+type Kline []interface{}
 
 // Helper function to get absolute value of int64
 func abs(n int64) int64 {
@@ -158,8 +64,8 @@ func loadCandlesFromFile(filename string) ([]Candle, error) {
 		return candles, nil
 	}
 
-	// If that fails, try BinanceKline format
-	var binanceData []BinanceKline
+	// If that fails, try Kline format
+	var binanceData []Kline
 	if err := json.Unmarshal(data, &binanceData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
 	}
@@ -236,51 +142,19 @@ func TestCandleTimeAggregation(t *testing.T) {
 		t.Fatalf("Failed to create 1m candle table: %v", err)
 	}
 
-	// Set the time range for fetching candle data
-	// Use a fixed, known time range to ensure test repeatability
-	// Set to a specific time to avoid potential inconsistencies with live data
-	endTime := time.Date(2023, time.July, 1, 12, 0, 0, 0, time.UTC)
-	startTime := endTime.Add(-12 * time.Hour) // Use a 12-hour window instead of 24
-
 	// Try to load test data from files first
 	var candles1m, candles15m []Candle
 
-	// Check if running in CI environment (GitHub Actions sets CI=true)
-	if os.Getenv("CI") == "true" || os.Getenv("USE_TEST_DATA") == "true" {
-		// Use local test data files
-		candles1m, err = loadCandlesFromFile("testdata/candle_1m_binance.json")
-		if err != nil {
-			t.Fatalf("Failed to load 1m candle test data: %v", err)
-		}
-
-		candles15m, err = loadCandlesFromFile("testdata/candle_15m_binance.json")
-		if err != nil {
-			t.Fatalf("Failed to load 15m candle test data: %v", err)
-		}
-	} else {
-		// Try to fetch from Binance API (for local development)
-		candles1m, err = fetchBinanceKlines("BTCUSDT", "1m", startTime, endTime, 720) // 720 minutes in 12 hours
-		if err != nil {
-			// If API fails, fall back to test data
-			t.Logf("Failed to fetch from Binance API: %v, falling back to test data", err)
-			candles1m, err = loadCandlesFromFile("testdata/candle_1m_binance.json")
-			if err != nil {
-				t.Fatalf("Failed to load 1m candle test data: %v", err)
-			}
-		}
-
-		candles15m, err = fetchBinanceKlines("BTCUSDT", "15m", startTime, endTime, 48) // 48 fifteen-minute intervals in 12 hours
-		if err != nil {
-			// If API fails, fall back to test data
-			t.Logf("Failed to fetch from Binance API: %v, falling back to test data", err)
-			candles15m, err = loadCandlesFromFile("testdata/candle_15m_binance.json")
-			if err != nil {
-				t.Fatalf("Failed to load 15m candle test data: %v", err)
-			}
-		}
+	// Use local test data files
+	candles1m, err = loadCandlesFromFile("testdata/candle_1m_binance.json")
+	if err != nil {
+		t.Fatalf("Failed to load 1m candle test data: %v", err)
 	}
 
-	t.Logf("Fetched %d 1-minute candles and %d 15-minute candles from Binance API", len(candles1m), len(candles15m))
+	candles15m, err = loadCandlesFromFile("testdata/candle_15m_binance.json")
+	if err != nil {
+		t.Fatalf("Failed to load 15m candle test data: %v", err)
+	}
 
 	// Debug log for timestamps - check the first few candles
 	zeroCount1m := 0
@@ -375,8 +249,6 @@ func TestCandleTimeAggregation(t *testing.T) {
 		t.Logf("Successfully inserted %d 1-minute candle data points", count)
 	}
 
-	// We've already fetched 15-minute candle data directly from Binance API
-
 	// Create maps for expected 15-minute candle data
 	expected15m := make(map[int64]Candle)
 	for _, candle := range candles15m {
@@ -421,7 +293,7 @@ func TestCandleTimeAggregation(t *testing.T) {
 		t.Logf("Processing interval from query: timestamp=%d (%s), bucket=%s",
 			intervalStartTime, intervalTime.Format(time.RFC3339), timeBucket)
 
-		// Find the closest matching 15m candle from Binance
+		// Find the closest matching 15m candle
 		var bestMatch Candle
 		var bestDiff int64 = 9999999999
 		var matchFound bool
@@ -515,7 +387,7 @@ func TestCandleTimeAggregation(t *testing.T) {
 		intervalCount, verified15mIntervals, expectedIntervals)
 
 	// The mismatch can happen in edge cases due to time alignment differences
-	// between our aggregation and Binance's. If the difference is small, consider it a success
+	// between our aggregation and candles If the difference is small, consider it a success
 	if verified15mIntervals >= expectedIntervals-1 {
 		// Accept a difference of at most 1 interval
 		t.Logf("Successfully verified %d out of %d expected 15-minute intervals (acceptable)",
@@ -550,9 +422,8 @@ func TestCandleTimeAggregation(t *testing.T) {
 	t.Logf("Database total volume: %.4f", groupedTotalVolume)
 
 	// Both should match within a reasonable tolerance
-	// Binance API's 15m candles might not precisely match 1m candles aggregated with TIME_TRUNC
 	volumeDiffPercent := math.Abs(expected15mTotalVolume-actual1mTotalVolume) / expected15mTotalVolume * 100
-	if volumeDiffPercent > 2.0 { // Allow 2.0% difference for Binance API data (verified actual difference is ~1.7%)
+	if volumeDiffPercent > 2.0 { // Allow 2.0% difference with 15m candles (verified actual difference is ~1.7%)
 		t.Errorf("Total volume mismatch: 15m data %.4f, 1m data %.4f (%.4f%% difference)",
 			expected15mTotalVolume, actual1mTotalVolume, volumeDiffPercent)
 	} else {

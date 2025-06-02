@@ -268,6 +268,9 @@ func (e *MVCCEngine) Close() error {
 		e.fileLock = nil
 	}
 
+	// On Windows, give time for file handles to be released
+	releaseFileHandles()
+
 	// Return combined errors if any occurred during shutdown
 	if len(shutdownErrors) > 0 {
 		return fmt.Errorf("engine shutdown completed with errors: %s", strings.Join(shutdownErrors, "; "))
@@ -287,6 +290,57 @@ func (e *MVCCEngine) cleanupResources() {
 	// Clear maps to help GC
 	clear(e.schemas)
 	clear(e.versionStores)
+}
+
+// CreateSnapshot manually triggers snapshot creation for all tables.
+// This is useful for testing to avoid waiting for the periodic snapshot interval.
+// Returns an error if persistence is not enabled or if snapshot creation fails.
+func (e *MVCCEngine) CreateSnapshot() error {
+	if !e.open.Load() {
+		return errors.New("engine is not open")
+	}
+
+	if e.persistence == nil || !e.persistence.IsEnabled() {
+		return errors.New("persistence is not enabled")
+	}
+
+	// Create snapshots for all tables
+	e.mu.RLock()
+	tableNames := make([]string, 0, len(e.schemas))
+	for tableName := range e.schemas {
+		tableNames = append(tableNames, tableName)
+	}
+	e.mu.RUnlock()
+
+	var lastErr error
+	for _, tableName := range tableNames {
+		e.persistence.mu.RLock()
+		diskStore, exists := e.persistence.diskStores[tableName]
+		e.persistence.mu.RUnlock()
+
+		if !exists || diskStore == nil {
+			continue
+		}
+
+		if err := diskStore.CreateSnapshot(); err != nil {
+			lastErr = fmt.Errorf("failed to create snapshot for table %s: %w", tableName, err)
+			log.Printf("Error: creating snapshot for table %s: %v\n", tableName, err)
+			continue
+		}
+
+		// Update last snapshot time
+		e.persistence.meta.lastSnapshotTimeNano.Store(time.Now().UnixNano())
+
+		// Clean up old snapshots if configured
+		if e.persistence.keepCount > 0 {
+			tableDir := filepath.Join(e.persistence.path, tableName)
+			if err := e.persistence.cleanupOldSnapshots(tableDir, e.persistence.keepCount); err != nil {
+				log.Printf("Warning: Failed to clean up old snapshots for table %s: %v\n", tableName, err)
+			}
+		}
+	}
+
+	return lastErr
 }
 
 // BeginTransaction starts a new transaction

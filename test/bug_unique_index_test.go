@@ -21,26 +21,22 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	// Import stoolap driver
+	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap/internal/common"
 	_ "github.com/stoolap/stoolap/pkg/driver"
 )
 
 // TestUniqueIndexBug verifies a bug where unique constraints aren't enforced
 // after database restart until rows are loaded into memory via SELECT.
 func TestUniqueIndexBug(t *testing.T) {
-	t.Parallel()
 	// Create a temporary database path
-	tempDir, err := os.MkdirTemp("", "stoolap_test_")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := common.TempDir(t)
 
 	dbPath := filepath.Join(tempDir, "test.db")
-	// Use a short snapshot interval to force snapshot creation
-	connString := fmt.Sprintf("file://%s?snapshot_interval=2", dbPath)
+	// Don't use snapshot interval, we'll manually trigger snapshots
+	connString := fmt.Sprintf("file://%s", dbPath)
 	t.Logf("Using connection string: %s", connString)
 
 	// First database connection
@@ -90,9 +86,15 @@ func TestUniqueIndexBug(t *testing.T) {
 		t.Logf("Note: Transaction commit returned: %v", err)
 	}
 
-	// Wait for snapshot to be created
-	t.Log("Waiting 3 seconds for snapshot to be created...")
-	time.Sleep(3 * time.Second)
+	// Manually create snapshot
+	t.Log("Creating snapshot...")
+	engine := stoolap.GetEngineByDSN(connString)
+	if engine == nil {
+		t.Fatalf("Failed to get engine for DSN: %s", connString)
+	}
+	if err := engine.CreateSnapshot(); err != nil {
+		t.Fatalf("Failed to create snapshot: %v", err)
+	}
 
 	// Close the database
 	err = db.Close()

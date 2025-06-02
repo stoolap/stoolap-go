@@ -16,10 +16,10 @@ limitations under the License.
 package test
 
 import (
-	"os"
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/storage"
 	"github.com/stoolap/stoolap/internal/storage/mvcc"
 )
@@ -28,11 +28,7 @@ import (
 // preserved during recovery and transaction visibility rules are maintained.
 func TestTransactionIDsVisibilityAfterRecovery(t *testing.T) {
 	// Create a temporary directory for the database files
-	dbDir, err := os.MkdirTemp("", "mvcc_txnid_recovery_test_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dbDir)
+	dbDir := common.TempDir(t)
 
 	// Configure the storage engine
 	config := &storage.Config{
@@ -45,7 +41,7 @@ func TestTransactionIDsVisibilityAfterRecovery(t *testing.T) {
 
 	// Create and open the first engine instance
 	engine := mvcc.NewMVCCEngine(config)
-	err = engine.Open()
+	err := engine.Open()
 	if err != nil {
 		t.Fatalf("Failed to open engine: %v", err)
 	}

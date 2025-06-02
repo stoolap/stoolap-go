@@ -147,12 +147,27 @@ func (db *DB) Close() error {
 	}
 
 	// Actually close the engine
-	return db.engine.Close()
+	err := db.engine.Close()
+
+	return err
 }
 
 // Engine returns the underlying storage engine
 func (db *DB) Engine() storage.Engine {
 	return db.engine
+}
+
+// GetEngineByDSN returns the engine for a given DSN if it exists in the registry.
+// This is useful for testing when you need to access the engine from a sql.DB connection.
+// Returns nil if the DSN is not found in the registry.
+func GetEngineByDSN(dsn string) storage.Engine {
+	engineMutex.RLock()
+	defer engineMutex.RUnlock()
+
+	if db, exists := engineRegistry[dsn]; exists {
+		return db.engine
+	}
+	return nil
 }
 
 // Executor represents a SQL query executor

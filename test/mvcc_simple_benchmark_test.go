@@ -18,7 +18,6 @@ package test
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -29,11 +28,7 @@ import (
 
 // BenchmarkMVCCInsert provides a simple benchmark for MVCC insert operations
 func BenchmarkMVCCInsertPersistent(b *testing.B) {
-	tempDir, err := os.MkdirTemp("", "stoolap_benchmark_insert_single_")
-	if err != nil {
-		b.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := b.TempDir()
 
 	// Open a connection to the database
 	db, err := sql.Open("stoolap", "file://"+tempDir+"?sync_mode=normal")

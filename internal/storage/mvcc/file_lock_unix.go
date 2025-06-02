@@ -35,3 +35,8 @@ func acquireLock(file *os.File) error {
 	}
 	return nil
 }
+
+// releaseFileHandles is a no-op on Unix systems
+func releaseFileHandles() {
+	// Unix systems don't need a delay after closing files
+}

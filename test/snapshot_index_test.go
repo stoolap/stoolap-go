@@ -21,9 +21,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	// Import stoolap driver
+	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap/internal/common"
 	_ "github.com/stoolap/stoolap/pkg/driver"
 )
 
@@ -31,18 +32,13 @@ import (
 // with custom names are properly persisted in snapshots and correctly
 // restored after database restart.
 func TestSnapshotIndexPersistence(t *testing.T) {
-	t.Parallel()
 	// Create a temporary database path
-	tempDir, err := os.MkdirTemp("", "stoolap_test_")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := common.TempDir(t)
 
 	dbPath := filepath.Join(tempDir, "test.db")
 
-	// Use a very short snapshot interval (2 seconds) for testing
-	connString := fmt.Sprintf("file://%s?snapshot_interval=2", dbPath)
+	// Don't use snapshot interval, we'll manually trigger snapshots
+	connString := fmt.Sprintf("file://%s", dbPath)
 	t.Logf("Using connection string: %s", connString)
 
 	// First database connection
@@ -148,9 +144,15 @@ func TestSnapshotIndexPersistence(t *testing.T) {
 		t.Logf("Note: Transaction commit returned: %v", err)
 	}
 
-	// Wait for snapshots to be created (at least 3 seconds)
-	t.Log("Waiting for snapshots to be created (3 seconds)...")
-	time.Sleep(3 * time.Second)
+	// Manually create snapshot
+	t.Log("Creating snapshot...")
+	engine := stoolap.GetEngineByDSN(connString)
+	if engine == nil {
+		t.Fatalf("Failed to get engine for DSN: %s", connString)
+	}
+	if err := engine.CreateSnapshot(); err != nil {
+		t.Fatalf("Failed to create snapshot: %v", err)
+	}
 
 	// Verify the snapshot directory exists
 	snapshotDir := filepath.Join(dbPath, "customers")

@@ -21,16 +21,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/storage"
 )
 
 func TestDiskVersionStore(t *testing.T) {
 	// Create a temporary directory for testing
-	tempDir, err := os.MkdirTemp("", "disk_version_store_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := common.TempDir(t)
 
 	// Create an engine and schema for testing
 	config := &storage.Config{Path: tempDir, Persistence: storage.DefaultPersistenceConfig()}
@@ -51,7 +48,7 @@ func TestDiskVersionStore(t *testing.T) {
 	}
 
 	// Create table in engine
-	_, err = engine.CreateTable(schema)
+	_, err := engine.CreateTable(schema)
 	if err != nil {
 		t.Fatalf("Failed to create table: %v", err)
 	}
@@ -353,11 +350,7 @@ func TestDiskVersionStore(t *testing.T) {
 
 func TestDiskVersionStoreEdgeCases(t *testing.T) {
 	// Create a temporary directory for testing
-	tempDir, err := os.MkdirTemp("", "disk_version_store_edge_cases")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := common.TempDir(t)
 
 	// Create an engine and schema for testing
 	config := &storage.Config{Path: tempDir, Persistence: storage.DefaultPersistenceConfig()}
@@ -381,7 +374,7 @@ func TestDiskVersionStoreEdgeCases(t *testing.T) {
 	}
 
 	// Create table in engine
-	_, err = engine.CreateTable(schema)
+	_, err := engine.CreateTable(schema)
 	if err != nil {
 		t.Fatalf("Failed to create table: %v", err)
 	}
@@ -584,11 +577,7 @@ func TestDiskVersionStoreEdgeCases(t *testing.T) {
 
 func TestDiskAppenderFinalize(t *testing.T) {
 	// Create a temporary directory for testing
-	tempDir, err := os.MkdirTemp("", "disk_appender_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := common.TempDir(t)
 
 	// Create appender
 	filePath := filepath.Join(tempDir, "test-appender.bin")
