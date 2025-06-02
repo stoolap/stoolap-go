@@ -35,11 +35,7 @@ func TestOldSnapshotWithWAL(t *testing.T) {
 	ctx := context.Background()
 
 	// Use a temporary directory for the test database
-	tempDir, err := os.MkdirTemp("", "stoolap_old_snapshot_test_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// Use short snapshot interval for first session only
 	dbPath := fmt.Sprintf("file://%s?snapshot_interval=2", tempDir)
