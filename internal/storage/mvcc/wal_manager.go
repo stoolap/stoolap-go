@@ -498,9 +498,6 @@ func (wm *WALManager) Close() error {
 		// Clear reference regardless of outcome
 		wm.walFile = nil
 
-		// On Windows, give time for file handles to be released
-		releaseFileHandles()
-
 		// Delete empty WAL file if it exists
 		if fileIsEmpty && filePath != "" {
 			if err := os.Remove(filePath); err != nil {

@@ -76,8 +76,5 @@ func (l *FileLock) Release() error {
 	// We don't remove the lock file as it will be reused on next open
 	// This helps preserve the lock file permissions between runs
 
-	// On Windows, give time for file handles to be released
-	releaseFileHandles()
-
 	return err
 }

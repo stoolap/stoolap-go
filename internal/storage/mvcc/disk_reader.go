@@ -151,8 +151,6 @@ func (r *DiskReader) Close() error {
 
 	if r.file != nil {
 		err := r.file.Close()
-		// On Windows, give time for file handles to be released
-		releaseFileHandles()
 		return err
 	}
 	return nil
