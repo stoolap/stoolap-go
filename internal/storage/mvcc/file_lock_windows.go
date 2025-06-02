@@ -75,5 +75,5 @@ func acquireLock(file *os.File) error {
 func releaseFileHandles() {
 	// Windows file handles may take a moment to be fully released
 	// This small delay helps prevent "file in use" errors during cleanup
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(250 * time.Millisecond)
 }

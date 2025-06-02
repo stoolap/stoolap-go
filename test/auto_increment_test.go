@@ -338,9 +338,6 @@ func TestAutoIncrementWALReplay(t *testing.T) {
 
 	// Close database
 	db.Close()
-
-	// Give Windows time to release file handles
-	time.Sleep(100 * time.Millisecond)
 }
 
 // TestAutoIncrementSnapshotLoading tests that auto-increment values are correctly persisted
@@ -499,7 +496,4 @@ func TestAutoIncrementSnapshotLoading(t *testing.T) {
 
 	// Close database
 	db.Close()
-
-	// Give Windows time to release file handles
-	time.Sleep(100 * time.Millisecond)
 }

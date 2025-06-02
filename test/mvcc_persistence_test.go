@@ -212,9 +212,6 @@ func TestMVCCPersistenceWithTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to close new engine: %v", err)
 	}
-
-	// Give Windows time to release file handles
-	time.Sleep(100 * time.Millisecond)
 }
 
 func TestMVCCRecoveryFromWAL(t *testing.T) {
@@ -426,9 +423,6 @@ func TestMVCCRecoveryFromWAL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to close new engine: %v", err)
 	}
-
-	// Give Windows time to release file handles
-	time.Sleep(100 * time.Millisecond)
 }
 
 // TestDataTypePersistenceWithSnapshot tests persistence of various data types through snapshots
@@ -693,7 +687,4 @@ func TestDataTypePersistenceWithSnapshot(t *testing.T) {
 
 	// Close the engine explicitly before test ends
 	newEngine.Close()
-
-	// Give Windows time to release file handles
-	time.Sleep(100 * time.Millisecond)
 }
