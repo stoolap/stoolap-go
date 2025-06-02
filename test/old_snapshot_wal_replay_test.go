@@ -21,7 +21,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stoolap/stoolap"
 )
@@ -37,8 +36,8 @@ func TestOldSnapshotWithWAL(t *testing.T) {
 	// Use a temporary directory for the test database
 	tempDir := t.TempDir()
 
-	// Use short snapshot interval for first session only
-	dbPath := fmt.Sprintf("file://%s?snapshot_interval=2", tempDir)
+	// Don't use snapshot interval, we'll manually trigger snapshots
+	dbPath := fmt.Sprintf("file://%s", tempDir)
 
 	// Session 1: Create data and wait for snapshot
 	t.Run("Session1_CreateSnapshot", func(t *testing.T) {
@@ -69,9 +68,11 @@ func TestOldSnapshotWithWAL(t *testing.T) {
 			}
 		}
 
-		// Wait for snapshot
-		t.Logf("Waiting for snapshot to be created...")
-		time.Sleep(3 * time.Second)
+		// Manually create snapshot
+		t.Logf("Creating snapshot...")
+		if err := db.Engine().CreateSnapshot(); err != nil {
+			t.Fatalf("Failed to create snapshot: %v", err)
+		}
 
 		// Verify snapshot exists
 		snapshots, _ := filepath.Glob(filepath.Join(tempDir, "users", "snapshot-*.bin"))

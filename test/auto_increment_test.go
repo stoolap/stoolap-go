@@ -24,6 +24,7 @@ import (
 	"time"
 
 	// Import stoolap driver
+	"github.com/stoolap/stoolap"
 	_ "github.com/stoolap/stoolap/pkg/driver"
 )
 
@@ -201,11 +202,7 @@ func TestAutoIncrementNonPKTable(t *testing.T) {
 // and restored when replaying the WAL (Write-Ahead Log)
 func TestAutoIncrementWALReplay(t *testing.T) {
 	// Create a temporary database path
-	tempDir, err := os.MkdirTemp("", "stoolap_test_")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	dbPath := filepath.Join(tempDir, "test.db")
 	// Testing with file:// (no extra slash)
@@ -344,17 +341,12 @@ func TestAutoIncrementWALReplay(t *testing.T) {
 // and restored when loading from a snapshot
 func TestAutoIncrementSnapshotLoading(t *testing.T) {
 	// Create a temporary database path
-	tempDir, err := os.MkdirTemp("", "stoolap_test_")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	dbPath := filepath.Join(tempDir, "test.db")
 
-	// Use a very short snapshot interval (2 seconds) for testing
-	// Testing with file:// (no triple slash)
-	connString := fmt.Sprintf("file://%s?snapshot_interval=2", dbPath)
+	// Don't use snapshot interval, we'll manually trigger snapshots
+	connString := fmt.Sprintf("file://%s", dbPath)
 
 	// First database connection
 	db, err := sql.Open("stoolap", connString)
@@ -421,9 +413,15 @@ func TestAutoIncrementSnapshotLoading(t *testing.T) {
 		t.Logf("Note: Transaction commit returned: %v", err)
 	}
 
-	// Wait for snapshot to be created
-	t.Log("Waiting for snapshot to be created (3 seconds)...")
-	time.Sleep(3 * time.Second)
+	// Manually create snapshot
+	t.Log("Creating snapshot...")
+	engine := stoolap.GetEngineByDSN(connString)
+	if engine == nil {
+		t.Fatalf("Failed to get engine for DSN: %s", connString)
+	}
+	if err := engine.CreateSnapshot(); err != nil {
+		t.Fatalf("Failed to create snapshot: %v", err)
+	}
 
 	// Close the database
 	err = db.Close()

@@ -17,7 +17,6 @@ package test
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -30,11 +29,7 @@ import (
 
 func TestNotOperator(t *testing.T) {
 	// Create a temporary directory for the test database
-	tempDir, err := os.MkdirTemp("", "stoolap_not_test_")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	dbPath := filepath.Join(tempDir, "test.db")
 

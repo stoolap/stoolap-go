@@ -37,11 +37,7 @@ const (
 // TestMultipleIndexesSerialization tests the serialization and deserialization of multiple indexes
 func TestMultipleIndexesSerialization(t *testing.T) {
 	// Create temporary directory for the test
-	tmpDir, err := os.MkdirTemp("", "index_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	// Create a simple schema for testing
 	schema := &storage.Schema{
@@ -59,7 +55,7 @@ func TestMultipleIndexesSerialization(t *testing.T) {
 
 	// Create a mock engine with schemas
 	engine := NewMVCCEngine(config)
-	err = engine.Open()
+	err := engine.Open()
 	if err != nil {
 		t.Fatalf("Failed to open engine: %v", err)
 	}

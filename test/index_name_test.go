@@ -18,7 +18,6 @@ package test
 import (
 	"context"
 	"database/sql"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -30,11 +29,7 @@ import (
 // when using CREATE INDEX IF NOT EXISTS across database reopens
 func TestIndexNamePersistence(t *testing.T) {
 	// Create a temporary directory for our database
-	tempDir, err := os.MkdirTemp("", "stoolap-index-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	dbPath := filepath.Join(tempDir, "test.db")
 	// Use file:// protocol to ensure persistence

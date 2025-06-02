@@ -18,7 +18,6 @@ package test
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -30,11 +29,7 @@ import (
 // and verifies that indexes are properly preserved across database reopens
 func TestIndexIfExistsOperations(t *testing.T) {
 	// Create a temporary database path
-	tempDir, err := os.MkdirTemp("", "stoolap_test_")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	dbPath := filepath.Join(tempDir, "test.db")
 	connString := fmt.Sprintf("file://%s", dbPath)

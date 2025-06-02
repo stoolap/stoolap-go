@@ -16,7 +16,6 @@ limitations under the License.
 package test
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -28,11 +27,7 @@ import (
 // preserved during recovery and transaction visibility rules are maintained.
 func TestTransactionIDsVisibilityAfterRecovery(t *testing.T) {
 	// Create a temporary directory for the database files
-	dbDir, err := os.MkdirTemp("", "mvcc_txnid_recovery_test_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dbDir)
+	dbDir := t.TempDir()
 
 	// Configure the storage engine
 	config := &storage.Config{
@@ -45,7 +40,7 @@ func TestTransactionIDsVisibilityAfterRecovery(t *testing.T) {
 
 	// Create and open the first engine instance
 	engine := mvcc.NewMVCCEngine(config)
-	err = engine.Open()
+	err := engine.Open()
 	if err != nil {
 		t.Fatalf("Failed to open engine: %v", err)
 	}

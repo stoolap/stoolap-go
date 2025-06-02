@@ -29,19 +29,15 @@ import (
 func TestMVCCPersistenceWithTruncation(t *testing.T) {
 	t.Parallel()
 	// Create a temporary directory for the database files
-	dbDir, err := os.MkdirTemp("", "mvcc_persistence_test_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dbDir)
+	dbDir := t.TempDir()
 
-	// Configure the storage engine with very frequent checkpoints to trigger WAL truncation
+	// Configure the storage engine without automatic snapshots
 	config := &storage.Config{
 		Path: dbDir,
 		Persistence: storage.PersistenceConfig{
 			Enabled:          true,
 			SyncMode:         1, // Normal
-			SnapshotInterval: 1, // 1 second for frequent snapshot creation and WAL truncation
+			SnapshotInterval: 0, // Disable automatic snapshots
 		},
 	}
 
@@ -51,7 +47,7 @@ func TestMVCCPersistenceWithTruncation(t *testing.T) {
 	engine := mvcc.NewMVCCEngine(config)
 
 	// Open engine
-	err = engine.Open()
+	err := engine.Open()
 	if err != nil {
 		t.Fatalf("Failed to open engine: %v", err)
 	}
@@ -83,9 +79,11 @@ func TestMVCCPersistenceWithTruncation(t *testing.T) {
 
 	// Reduced to 3 batches with smaller batch size
 	for j := 0; j < 3; j++ {
-		// Use a much shorter sleep to still trigger checkpoint but not waste time
+		// Create snapshot after each batch except the first
 		if j > 0 {
-			time.Sleep(250 * time.Millisecond)
+			if err := engine.CreateSnapshot(); err != nil {
+				t.Fatalf("Failed to create snapshot: %v", err)
+			}
 		}
 
 		tx, err = engine.BeginTransaction()
@@ -121,8 +119,10 @@ func TestMVCCPersistenceWithTruncation(t *testing.T) {
 	endSeconds := time.Since(start).Seconds()
 	t.Logf("Time taken for all inserts: %0.2fs", endSeconds)
 
-	// Shorter wait for final snapshot
-	time.Sleep(500 * time.Millisecond)
+	// Create final snapshot
+	if err := engine.CreateSnapshot(); err != nil {
+		t.Fatalf("Failed to create final snapshot: %v", err)
+	}
 
 	// Check if WAL directory exists
 	walDir := filepath.Join(dbDir, "wal")
@@ -166,8 +166,7 @@ func TestMVCCPersistenceWithTruncation(t *testing.T) {
 		t.Fatalf("Failed to reopen engine: %v", err)
 	}
 
-	// Shorter wait for recovery completion
-	time.Sleep(250 * time.Millisecond)
+	// Recovery should be synchronous, no wait needed
 
 	// Verify data was recovered
 	tx, err = newEngine.BeginTransaction()
@@ -218,11 +217,7 @@ func TestMVCCPersistenceWithTruncation(t *testing.T) {
 func TestMVCCRecoveryFromWAL(t *testing.T) {
 	t.Parallel()
 	// Create a temporary directory for the database files
-	dbDir, err := os.MkdirTemp("", "mvcc_wal_recovery_test_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dbDir)
+	dbDir := t.TempDir()
 	t.Logf("Temporary directory created: %s\n", dbDir)
 
 	// Configure the storage engine with quick checkpoints
@@ -238,7 +233,7 @@ func TestMVCCRecoveryFromWAL(t *testing.T) {
 	engine := mvcc.NewMVCCEngine(config)
 
 	// Open engine
-	err = engine.Open()
+	err := engine.Open()
 	if err != nil {
 		t.Fatalf("Failed to open engine: %v", err)
 	}
@@ -296,8 +291,8 @@ func TestMVCCRecoveryFromWAL(t *testing.T) {
 		t.Fatalf("Failed to commit transaction: %v", err)
 	}
 
-	// Wait a moment between phases
-	time.Sleep(1 * time.Second)
+	// Small pause between phases (not needed for functionality, just for test clarity)
+	time.Sleep(10 * time.Millisecond)
 
 	// Phase 2: Insert 10 more rows (IDs 10-19)
 	tx, err = engine.BeginTransaction()
@@ -341,8 +336,7 @@ func TestMVCCRecoveryFromWAL(t *testing.T) {
 		t.Fatalf("Failed to reopen engine: %v", err)
 	}
 
-	// Wait for recovery to complete
-	time.Sleep(2 * time.Second)
+	// Recovery should be synchronous, no wait needed
 
 	// Verify all data was recovered
 	tx, err = newEngine.BeginTransaction()
@@ -435,19 +429,15 @@ func TestMVCCRecoveryFromWAL(t *testing.T) {
 func TestDataTypePersistenceWithSnapshot(t *testing.T) {
 	t.Parallel()
 	// Create a temporary directory for the database files
-	dbDir, err := os.MkdirTemp("", "data_types_snapshot_test_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dbDir)
+	dbDir := t.TempDir()
 
-	// Configure the storage engine with low snapshot interval
+	// Configure the storage engine without automatic snapshots
 	config := &storage.Config{
 		Path: dbDir,
 		Persistence: storage.PersistenceConfig{
 			Enabled:          true,
 			SyncMode:         1, // Normal
-			SnapshotInterval: 2, // 1 second for quick snapshot creation
+			SnapshotInterval: 0, // Disable automatic snapshots
 			KeepSnapshots:    2, // Keep 2 snapshots
 		},
 	}
@@ -456,7 +446,7 @@ func TestDataTypePersistenceWithSnapshot(t *testing.T) {
 	engine := mvcc.NewMVCCEngine(config)
 
 	// Open engine
-	err = engine.Open()
+	err := engine.Open()
 	if err != nil {
 		t.Fatalf("Failed to open engine: %v", err)
 	}
@@ -533,9 +523,11 @@ func TestDataTypePersistenceWithSnapshot(t *testing.T) {
 		t.Fatalf("Failed to commit transaction: %v", err)
 	}
 
-	// Wait a bit for the snapshot to be created
-	t.Log("Waiting for snapshot to be created...")
-	time.Sleep(3 * time.Second)
+	// Manually create snapshot
+	t.Log("Creating snapshot...")
+	if err := engine.CreateSnapshot(); err != nil {
+		t.Fatalf("Failed to create snapshot: %v", err)
+	}
 
 	// Close the engine to flush all data
 	engine.Close()

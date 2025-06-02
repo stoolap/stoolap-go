@@ -17,7 +17,6 @@ package test
 
 import (
 	"database/sql"
-	"os"
 	"testing"
 	"time"
 
@@ -28,11 +27,7 @@ import (
 // deletion of rows where active=true (half of the rows), and verification of the count.
 // The table has a columnar index on the boolean column.
 func TestBooleanColumnarIndexBulkDelete(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "stoolap_boolean_bulk_test_")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// Create a temporary database in memory
 	dbPath := "file://" + tempDir + "/boolean_test.db?persistence=true&sync_mode=normal&snapshot_interval=1"

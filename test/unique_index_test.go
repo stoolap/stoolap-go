@@ -18,7 +18,6 @@ package test
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"testing"
 
 	_ "github.com/stoolap/stoolap/pkg/driver" // Register stoolap driver
@@ -28,11 +27,7 @@ import (
 // when using CREATE UNIQUE INDEX across database reopens
 func TestUniqueIndexPersistence(t *testing.T) {
 	// Create a temporary directory for our database
-	tempDir, err := os.MkdirTemp("", "stoolap-unique-index-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// Use file:// to test persistence
 	connString := "file://" + tempDir

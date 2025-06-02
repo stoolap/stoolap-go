@@ -108,6 +108,10 @@ func (m *mockEngine) SetIsolationLevel(level storage.IsolationLevel) error {
 	return nil
 }
 
+func (m *mockEngine) CreateSnapshot() error {
+	return nil
+}
+
 // mockTransaction is a simple mock implementation of storage.Transaction
 type mockTransaction struct{}
 

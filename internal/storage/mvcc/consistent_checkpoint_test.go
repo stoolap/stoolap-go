@@ -26,11 +26,7 @@ import (
 
 func TestConsistentCheckpoint(t *testing.T) {
 	// Create a temporary directory for testing
-	testDir, err := os.MkdirTemp("", "test-checkpoint-*")
-	if err != nil {
-		t.Fatalf("Failed to create test directory: %v", err)
-	}
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	// Create a WAL manager with basic configuration
 	config := storage.PersistenceConfig{
