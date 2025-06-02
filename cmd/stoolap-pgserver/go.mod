@@ -7,7 +7,7 @@ toolchain go1.24.3
 require (
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/spf13/cobra v1.9.1
-	github.com/stoolap/stoolap v0.1.0
+	github.com/stoolap/stoolap v0.1.1
 )
 
 require (
