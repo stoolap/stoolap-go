@@ -268,6 +268,9 @@ func (e *MVCCEngine) Close() error {
 		e.fileLock = nil
 	}
 
+	// On Windows, give time for file handles to be released
+	releaseFileHandles()
+	
 	// Return combined errors if any occurred during shutdown
 	if len(shutdownErrors) > 0 {
 		return fmt.Errorf("engine shutdown completed with errors: %s", strings.Join(shutdownErrors, "; "))
