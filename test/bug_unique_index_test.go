@@ -218,4 +218,7 @@ func TestUniqueIndexBug(t *testing.T) {
 	// Verification complete
 	t.Log("Bug verification complete")
 	db.Close()
+	
+	// Give Windows time to release file handles
+	time.Sleep(100 * time.Millisecond)
 }

@@ -316,4 +316,7 @@ func TestSnapshotIndexPersistence(t *testing.T) {
 	}
 
 	t.Log("Test completed successfully")
+	
+	// Give Windows time to release file handles
+	time.Sleep(100 * time.Millisecond)
 }
