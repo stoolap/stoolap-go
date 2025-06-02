@@ -30,7 +30,6 @@ import (
 // TestUniqueIndexBug verifies a bug where unique constraints aren't enforced
 // after database restart until rows are loaded into memory via SELECT.
 func TestUniqueIndexBug(t *testing.T) {
-	t.Parallel()
 	// Create a temporary database path
 	tempDir := t.TempDir()
 

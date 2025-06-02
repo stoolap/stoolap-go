@@ -27,7 +27,6 @@ import (
 )
 
 func TestMVCCPersistenceWithTruncation(t *testing.T) {
-	t.Parallel()
 	// Create a temporary directory for the database files
 	dbDir := t.TempDir()
 
@@ -215,7 +214,6 @@ func TestMVCCPersistenceWithTruncation(t *testing.T) {
 }
 
 func TestMVCCRecoveryFromWAL(t *testing.T) {
-	t.Parallel()
 	// Create a temporary directory for the database files
 	dbDir := t.TempDir()
 	t.Logf("Temporary directory created: %s\n", dbDir)
@@ -427,7 +425,6 @@ func TestMVCCRecoveryFromWAL(t *testing.T) {
 
 // TestDataTypePersistenceWithSnapshot tests persistence of various data types through snapshots
 func TestDataTypePersistenceWithSnapshot(t *testing.T) {
-	t.Parallel()
 	// Create a temporary directory for the database files
 	dbDir := t.TempDir()
 

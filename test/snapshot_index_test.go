@@ -31,7 +31,6 @@ import (
 // with custom names are properly persisted in snapshots and correctly
 // restored after database restart.
 func TestSnapshotIndexPersistence(t *testing.T) {
-	t.Parallel()
 	// Create a temporary database path
 	tempDir := t.TempDir()
 
