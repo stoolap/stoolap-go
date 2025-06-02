@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/storage"
 	"github.com/stoolap/stoolap/internal/storage/binser"
 )
@@ -37,7 +38,7 @@ const (
 // TestMultipleIndexesSerialization tests the serialization and deserialization of multiple indexes
 func TestMultipleIndexesSerialization(t *testing.T) {
 	// Create temporary directory for the test
-	tmpDir := t.TempDir()
+	tmpDir := common.TempDir(t)
 
 	// Create a simple schema for testing
 	schema := &storage.Schema{

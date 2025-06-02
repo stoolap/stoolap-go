@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap/internal/common"
 	_ "github.com/stoolap/stoolap/pkg/driver" // Register stoolap driver
 )
 
@@ -29,7 +30,7 @@ import (
 // when using CREATE INDEX IF NOT EXISTS across database reopens
 func TestIndexNamePersistence(t *testing.T) {
 	// Create a temporary directory for our database
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	dbPath := filepath.Join(tempDir, "test.db")
 	// Use file:// protocol to ensure persistence

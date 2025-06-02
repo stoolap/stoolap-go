@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/sql"
 	"github.com/stoolap/stoolap/internal/storage"
 
@@ -29,7 +30,7 @@ import (
 
 func TestNotOperator(t *testing.T) {
 	// Create a temporary directory for the test database
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	dbPath := filepath.Join(tempDir, "test.db")
 

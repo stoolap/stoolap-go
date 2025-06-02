@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stoolap/stoolap/internal/common"
 	_ "github.com/stoolap/stoolap/pkg/driver" // Register stoolap driver
 )
 
@@ -27,7 +28,7 @@ import (
 // without the complexities of database reopening
 func TestIndexDirectCreate(t *testing.T) {
 	// Create a temporary directory for our database
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	// Use file:// to test persistence
 	connString := "file://" + tempDir

@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	// Import stoolap driver
+	"github.com/stoolap/stoolap/internal/common"
 	_ "github.com/stoolap/stoolap/pkg/driver"
 )
 
@@ -29,7 +30,7 @@ import (
 // and verifies that indexes are properly preserved across database reopens
 func TestIndexIfExistsOperations(t *testing.T) {
 	// Create a temporary database path
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	dbPath := filepath.Join(tempDir, "test.db")
 	connString := fmt.Sprintf("file://%s", dbPath)

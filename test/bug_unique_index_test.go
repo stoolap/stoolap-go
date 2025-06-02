@@ -24,6 +24,7 @@ import (
 
 	// Import stoolap driver
 	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap/internal/common"
 	_ "github.com/stoolap/stoolap/pkg/driver"
 )
 
@@ -31,7 +32,7 @@ import (
 // after database restart until rows are loaded into memory via SELECT.
 func TestUniqueIndexBug(t *testing.T) {
 	// Create a temporary database path
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	dbPath := filepath.Join(tempDir, "test.db")
 	// Don't use snapshot interval, we'll manually trigger snapshots

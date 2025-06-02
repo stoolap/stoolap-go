@@ -24,6 +24,7 @@ import (
 
 	// Import stoolap driver
 	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap/internal/common"
 	_ "github.com/stoolap/stoolap/pkg/driver"
 )
 
@@ -32,7 +33,7 @@ import (
 // restored after database restart.
 func TestSnapshotIndexPersistence(t *testing.T) {
 	// Create a temporary database path
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	dbPath := filepath.Join(tempDir, "test.db")
 

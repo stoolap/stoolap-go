@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/storage"
 )
 
@@ -44,7 +45,7 @@ func createTestEntry(txnID int64, tableName string, rowID int64, op WALOperation
 // TestWALReplayUpdatesCurrentLSN verifies that the WAL.currentLSN is updated during replay
 func TestWALReplayUpdatesCurrentLSN(t *testing.T) {
 	// Create a temporary directory for the test
-	testDir := t.TempDir()
+	testDir := common.TempDir(t)
 
 	// Create test configuration
 	config := storage.PersistenceConfig{
@@ -204,7 +205,7 @@ func TestWALSyncModes(t *testing.T) {
 	for _, sm := range syncModes {
 		t.Run(sm.name, func(t *testing.T) {
 			// Create a temporary directory for the test
-			testDir := t.TempDir()
+			testDir := common.TempDir(t)
 
 			// Create test configuration with the current sync mode
 			config := storage.PersistenceConfig{
@@ -269,7 +270,7 @@ func TestWALSyncModes(t *testing.T) {
 // TestWALTransactionTypes tests the recording and replay of different WAL operation types
 func TestWALTransactionTypes(t *testing.T) {
 	// Create a temporary directory for the test
-	testDir := t.TempDir()
+	testDir := common.TempDir(t)
 
 	// Create test configuration
 	config := storage.PersistenceConfig{
@@ -409,7 +410,7 @@ func TestWALTransactionTypes(t *testing.T) {
 // TestWALCheckpointRecovery tests that checkpoint recovery works correctly with WAL truncation
 func TestWALCheckpointRecovery(t *testing.T) {
 	// Create a temporary directory for the test
-	testDir := t.TempDir()
+	testDir := common.TempDir(t)
 
 	// Create test configuration
 	config := storage.PersistenceConfig{
@@ -573,7 +574,7 @@ func TestWALCheckpointRecovery(t *testing.T) {
 // through the WAL system
 func TestDataTypePersistence(t *testing.T) {
 	// Create a temporary directory for the test
-	testDir := t.TempDir()
+	testDir := common.TempDir(t)
 
 	// Create test configuration
 	config := storage.PersistenceConfig{
@@ -846,7 +847,7 @@ func TestDataTypePersistence(t *testing.T) {
 // TestWALDDLOperations tests that DDL operations are correctly recorded and replayed in the WAL
 func TestWALDDLOperations(t *testing.T) {
 	// Create a temporary directory for the test
-	testDir := t.TempDir()
+	testDir := common.TempDir(t)
 
 	// Create test configuration
 	config := storage.PersistenceConfig{
@@ -1265,7 +1266,7 @@ func deserializeSchemaForTest(data []byte) (*storage.Schema, error) {
 // TestWALEmptyFileHandling tests the handling of empty WAL files
 func TestWALEmptyFileHandling(t *testing.T) {
 	// Create a temporary directory for the test
-	testDir := t.TempDir()
+	testDir := common.TempDir(t)
 
 	// Create test configuration
 	config := storage.PersistenceConfig{

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/storage"
 	"github.com/stoolap/stoolap/internal/storage/mvcc"
 )
@@ -27,7 +28,7 @@ import (
 // preserved during recovery and transaction visibility rules are maintained.
 func TestTransactionIDsVisibilityAfterRecovery(t *testing.T) {
 	// Create a temporary directory for the database files
-	dbDir := t.TempDir()
+	dbDir := common.TempDir(t)
 
 	// Configure the storage engine
 	config := &storage.Config{

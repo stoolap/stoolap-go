@@ -22,13 +22,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/storage"
 	"github.com/stoolap/stoolap/internal/storage/mvcc"
 )
 
 func TestMVCCPersistenceWithTruncation(t *testing.T) {
 	// Create a temporary directory for the database files
-	dbDir := t.TempDir()
+	dbDir := common.TempDir(t)
 
 	// Configure the storage engine without automatic snapshots
 	config := &storage.Config{
@@ -215,7 +216,7 @@ func TestMVCCPersistenceWithTruncation(t *testing.T) {
 
 func TestMVCCRecoveryFromWAL(t *testing.T) {
 	// Create a temporary directory for the database files
-	dbDir := t.TempDir()
+	dbDir := common.TempDir(t)
 	t.Logf("Temporary directory created: %s\n", dbDir)
 
 	// Configure the storage engine with quick checkpoints
@@ -426,7 +427,7 @@ func TestMVCCRecoveryFromWAL(t *testing.T) {
 // TestDataTypePersistenceWithSnapshot tests persistence of various data types through snapshots
 func TestDataTypePersistenceWithSnapshot(t *testing.T) {
 	// Create a temporary directory for the database files
-	dbDir := t.TempDir()
+	dbDir := common.TempDir(t)
 
 	// Configure the storage engine without automatic snapshots
 	config := &storage.Config{

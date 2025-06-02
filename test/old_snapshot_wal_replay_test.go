@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap/internal/common"
 )
 
 // TestOldSnapshotWithWAL tests the scenario where:
@@ -34,7 +35,7 @@ func TestOldSnapshotWithWAL(t *testing.T) {
 	ctx := context.Background()
 
 	// Use a temporary directory for the test database
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	// Don't use snapshot interval, we'll manually trigger snapshots
 	dbPath := fmt.Sprintf("file://%s", tempDir)

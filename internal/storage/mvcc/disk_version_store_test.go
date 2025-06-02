@@ -21,12 +21,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stoolap/stoolap/internal/common"
 	"github.com/stoolap/stoolap/internal/storage"
 )
 
 func TestDiskVersionStore(t *testing.T) {
 	// Create a temporary directory for testing
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	// Create an engine and schema for testing
 	config := &storage.Config{Path: tempDir, Persistence: storage.DefaultPersistenceConfig()}
@@ -349,7 +350,7 @@ func TestDiskVersionStore(t *testing.T) {
 
 func TestDiskVersionStoreEdgeCases(t *testing.T) {
 	// Create a temporary directory for testing
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	// Create an engine and schema for testing
 	config := &storage.Config{Path: tempDir, Persistence: storage.DefaultPersistenceConfig()}
@@ -576,7 +577,7 @@ func TestDiskVersionStoreEdgeCases(t *testing.T) {
 
 func TestDiskAppenderFinalize(t *testing.T) {
 	// Create a temporary directory for testing
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	// Create appender
 	filePath := filepath.Join(tempDir, "test-appender.bin")

@@ -25,6 +25,7 @@ import (
 
 	// Import stoolap driver
 	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap/internal/common"
 	_ "github.com/stoolap/stoolap/pkg/driver"
 )
 
@@ -202,7 +203,7 @@ func TestAutoIncrementNonPKTable(t *testing.T) {
 // and restored when replaying the WAL (Write-Ahead Log)
 func TestAutoIncrementWALReplay(t *testing.T) {
 	// Create a temporary database path
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	dbPath := filepath.Join(tempDir, "test.db")
 	// Testing with file:// (no extra slash)
@@ -344,7 +345,7 @@ func TestAutoIncrementWALReplay(t *testing.T) {
 // and restored when loading from a snapshot
 func TestAutoIncrementSnapshotLoading(t *testing.T) {
 	// Create a temporary database path
-	tempDir := t.TempDir()
+	tempDir := common.TempDir(t)
 
 	dbPath := filepath.Join(tempDir, "test.db")
 
