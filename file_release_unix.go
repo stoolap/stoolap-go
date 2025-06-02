@@ -13,18 +13,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package common
 
-const (
-	// VersionMajor is the major version of the driver
-	VersionMajor = "0"
-	// VersionMinor is the minor version of the driver
-	VersionMinor = "1"
-	// VersionPatch is the patch version of the driver
-	VersionPatch = "0"
-	// VersionSuffix is the suffix of the driver version
-	VersionSuffix = "fc5704b9" // git commit hash
+//go:build !windows
+// +build !windows
 
-	// VersionString is the version string of the driver
-	VersionString = "Stoolap v" + VersionMajor + "." + VersionMinor + "." + VersionPatch + "-" + VersionSuffix
-)
+package stoolap
+
+// releaseFileHandles is a no-op on Unix systems
+func releaseFileHandles() {
+	// No-op on Unix systems
+}

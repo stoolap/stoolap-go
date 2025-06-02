@@ -147,7 +147,12 @@ func (db *DB) Close() error {
 	}
 
 	// Actually close the engine
-	return db.engine.Close()
+	err := db.engine.Close()
+	
+	// On Windows, give time for file handles to be released
+	releaseFileHandles()
+	
+	return err
 }
 
 // Engine returns the underlying storage engine

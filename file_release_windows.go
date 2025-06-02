@@ -13,18 +13,28 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package common
 
-const (
-	// VersionMajor is the major version of the driver
-	VersionMajor = "0"
-	// VersionMinor is the minor version of the driver
-	VersionMinor = "1"
-	// VersionPatch is the patch version of the driver
-	VersionPatch = "0"
-	// VersionSuffix is the suffix of the driver version
-	VersionSuffix = "fc5704b9" // git commit hash
+//go:build windows
+// +build windows
 
-	// VersionString is the version string of the driver
-	VersionString = "Stoolap v" + VersionMajor + "." + VersionMinor + "." + VersionPatch + "-" + VersionSuffix
+package stoolap
+
+import (
+	"os"
+	"time"
 )
+
+// releaseFileHandles adds a delay on Windows to ensure file handles are released
+// before attempting to remove files. This is a Windows-specific issue where
+// file handles are not immediately released after Close() is called.
+func releaseFileHandles() {
+	// Default delay
+	delay := 250 * time.Millisecond
+	
+	// In CI environments, use a longer delay
+	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+		delay = 1 * time.Second
+	}
+	
+	time.Sleep(delay)
+}
