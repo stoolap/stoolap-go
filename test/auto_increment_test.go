@@ -335,10 +335,10 @@ func TestAutoIncrementWALReplay(t *testing.T) {
 	if logCount != 6 {
 		t.Errorf("Expected 6 log records, got %d", logCount)
 	}
-	
+
 	// Close database
 	db.Close()
-	
+
 	// Give Windows time to release file handles
 	time.Sleep(100 * time.Millisecond)
 }
@@ -496,10 +496,10 @@ func TestAutoIncrementSnapshotLoading(t *testing.T) {
 	if activityCount != 11 { // 10 initial + 1 after snapshot
 		t.Errorf("Expected 11 activities, got %d", activityCount)
 	}
-	
+
 	// Close database
 	db.Close()
-	
+
 	// Give Windows time to release file handles
 	time.Sleep(100 * time.Millisecond)
 }
