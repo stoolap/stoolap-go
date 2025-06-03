@@ -16,6 +16,7 @@ limitations under the License.
 package test
 
 import (
+	"context"
 	"database/sql"
 	"sync"
 	"testing"
@@ -71,7 +72,9 @@ func TestConcurrentSumIsolation(t *testing.T) {
 			defer wg.Done()
 
 			// Each thread does a transfer
-			tx, err := db.Begin()
+			tx, err := db.BeginTx(context.Background(), &sql.TxOptions{
+				Isolation: sql.LevelSnapshot, // Use SNAPSHOT isolation
+			})
 			if err != nil {
 				t.Logf("Thread %d: Failed to begin tx: %v", tid, err)
 				return
@@ -112,15 +115,25 @@ func TestConcurrentSumIsolation(t *testing.T) {
 			case <-readerDone:
 				return
 			default:
+				tx, err := db.BeginTx(context.Background(), &sql.TxOptions{
+					Isolation: sql.LevelSnapshot, // Use SNAPSHOT isolation
+				})
+				if err != nil {
+					t.Errorf("Reader failed to begin tx: %v", err)
+					tx.Rollback() // Rollback reader transaction
+					return
+				}
 				var sum int
-				err := db.QueryRow("SELECT SUM(balance) FROM accounts").Scan(&sum)
+				err = tx.QueryRow("SELECT SUM(balance) FROM accounts").Scan(&sum)
 				if err != nil {
 					t.Errorf("Reader failed: %v", err)
+					tx.Rollback() // Rollback reader transaction
 					continue
 				}
 				if sum != 10000 {
 					t.Errorf("Sum invariant violated: expected 10000, got %d", sum)
 				}
+				tx.Rollback() // Rollback reader transaction
 				time.Sleep(time.Millisecond)
 			}
 		}
