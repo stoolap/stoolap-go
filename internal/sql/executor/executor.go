@@ -683,6 +683,25 @@ func (e *Executor) executePragma(stmt *parser.PragmaStatement) (storage.Result, 
 				currentRow: 0,
 			}
 		}
+	case "SNAPSHOT":
+		// Handle SNAPSHOT command - creates a manual snapshot
+		if stmt.Value != nil {
+			return nil, fmt.Errorf("PRAGMA SNAPSHOT does not accept values")
+		}
+
+		// Create a snapshot
+		if err := e.engine.CreateSnapshot(); err != nil {
+			return nil, fmt.Errorf("failed to create snapshot: %v", err)
+		}
+
+		// Return success result
+		result = &ExecResult{
+			columns:    []string{"result"},
+			rows:       [][]interface{}{{"Snapshot created successfully"}},
+			isMemory:   true,
+			ctx:        context.Background(),
+			currentRow: 0,
+		}
 	default:
 		return nil, fmt.Errorf("unknown PRAGMA setting: %s", pragmaName)
 	}

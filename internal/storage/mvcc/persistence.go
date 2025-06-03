@@ -1122,8 +1122,11 @@ func (pm *PersistenceManager) applyWALEntry(entry WALEntry, tables map[string]*s
 			return err
 		}
 
-		// For UPDATE operations, fix any snapshot versions in the chain
-		if entry.Operation == WALUpdate {
+		// Fix any snapshot versions in the chain for both UPDATE and INSERT operations
+		// Since updates are actually logged as WALInsert (not WALUpdate), we need to check
+		// if this is an update by checking if a version already exists for this rowID
+		// We use QuickCheckRowExistence which checks both memory and disk
+		if entry.Operation == WALUpdate || vs.QuickCheckRowExistence(entry.RowID) {
 			pm.fixSnapshotVersions(vs, entry.TableName, entry.RowID, entry.TxnID)
 		}
 

@@ -85,6 +85,25 @@ PRAGMA wal_flush_trigger = 1000;
 PRAGMA wal_flush_trigger;
 ```
 
+### Manual Snapshot Control
+
+#### SNAPSHOT
+
+Creates an immediate snapshot of all tables in the database:
+
+```sql
+-- Create a snapshot immediately
+PRAGMA SNAPSHOT;
+```
+
+This command is useful for:
+- Testing snapshot functionality
+- Creating consistent backup points
+- Ensuring data is persisted before critical operations
+- Manual control over snapshot timing instead of relying on `snapshot_interval`
+
+Note: PRAGMA SNAPSHOT does not accept any values and will return an error if you try to assign a value to it.
+
 ## Examples
 
 ### Basic PRAGMA Usage
@@ -108,6 +127,22 @@ PRAGMA keep_snapshots = 10;
 
 -- Set WAL flush trigger to 1000 operations
 PRAGMA wal_flush_trigger = 1000;
+```
+
+### Manual Snapshot Example
+
+```sql
+-- Insert some data
+INSERT INTO users (id, name) VALUES (1, 'John');
+
+-- Create a snapshot immediately to ensure data is persisted
+PRAGMA SNAPSHOT;
+
+-- Continue with more operations
+UPDATE users SET name = 'Jane' WHERE id = 1;
+
+-- Create another snapshot after the update
+PRAGMA SNAPSHOT;
 ```
 
 ## PRAGMA Persistence
