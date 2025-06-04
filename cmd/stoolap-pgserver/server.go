@@ -33,7 +33,11 @@ import (
 )
 
 type server struct {
-	db *stoolap.DB
+	db       *stoolap.DB
+	dbMapper *DatabaseMapper
+
+	// For multi-database support in the future
+	databases map[string]*stoolap.DB
 }
 
 func runServer() error {
@@ -107,8 +111,32 @@ func (s *server) handleConnection(conn net.Conn) {
 		return
 	}
 
-	switch startupMsg.(type) {
+	switch msg := startupMsg.(type) {
 	case *pgproto3.StartupMessage:
+		// Check if database parameter matches what we expect
+		requestedDB := msg.Parameters["database"]
+		if requestedDB == "" {
+			// Default to the user name if no database specified
+			requestedDB = msg.Parameters["user"]
+		}
+
+		// For now, we only support connecting to the "stoolap" database
+		// In the future, we could map database names to file paths
+		if requestedDB != "" && requestedDB != "stoolap" && requestedDB != "postgres" {
+			// Send error response for unsupported database
+			backend.Send(&pgproto3.ErrorResponse{
+				Severity: "FATAL",
+				Code:     "3D000", // invalid_catalog_name
+				Message:  fmt.Sprintf("database \"%s\" does not exist", requestedDB),
+			})
+			return
+		}
+
+		// Log the connection attempt
+		if verbose {
+			log.Printf("Client connecting to database: %s (user: %s)", requestedDB, msg.Parameters["user"])
+		}
+
 		// Send auth OK
 		backend.Send(&pgproto3.AuthenticationOk{})
 
@@ -137,6 +165,12 @@ func (s *server) handleConnection(conn net.Conn) {
 		})
 
 		backend.Send(&pgproto3.ReadyForQuery{TxStatus: connState.getTxStatus()})
+
+		// Flush all startup messages
+		if err := backend.Flush(); err != nil {
+			log.Printf("Failed to flush startup messages: %v", err)
+			return
+		}
 
 	case *pgproto3.SSLRequest:
 		// We don't support SSL
@@ -184,6 +218,10 @@ func (s *server) handleConnection(conn net.Conn) {
 				Message:  err.Error(),
 			})
 			backend.Send(&pgproto3.ReadyForQuery{TxStatus: connState.getTxStatus()})
+			// Flush error response
+			if flushErr := backend.Flush(); flushErr != nil {
+				log.Printf("Failed to flush error response: %v", flushErr)
+			}
 		}
 	}
 }
@@ -212,10 +250,16 @@ func (s *server) handleMessage(connState *connectionState, backend *pgproto3.Bac
 		// Send command complete
 		backend.Send(&pgproto3.CommandComplete{CommandTag: []byte("SELECT 0")})
 		backend.Send(&pgproto3.ReadyForQuery{TxStatus: connState.getTxStatus()})
+		if err := backend.Flush(); err != nil {
+			return fmt.Errorf("failed to flush execute response: %v", err)
+		}
 		return nil
 
 	case *pgproto3.Sync:
 		backend.Send(&pgproto3.ReadyForQuery{TxStatus: connState.getTxStatus()})
+		if err := backend.Flush(); err != nil {
+			return fmt.Errorf("failed to flush sync response: %v", err)
+		}
 		return nil
 
 	case *pgproto3.Terminate:
@@ -393,6 +437,12 @@ func (s *server) handleQuery(connState *connectionState, backend *pgproto3.Backe
 	}
 
 	backend.Send(&pgproto3.ReadyForQuery{TxStatus: connState.getTxStatus()})
+
+	// Flush the response
+	if err := backend.Flush(); err != nil {
+		return fmt.Errorf("failed to flush query response: %v", err)
+	}
+
 	return nil
 }
 
@@ -423,6 +473,12 @@ func (s *server) handleSelect1(backend *pgproto3.Backend) error {
 	})
 
 	backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+
+	// Flush response
+	if err := backend.Flush(); err != nil {
+		return fmt.Errorf("failed to flush response: %v", err)
+	}
+
 	return nil
 }
 
@@ -453,6 +509,12 @@ func (s *server) handleVersion(backend *pgproto3.Backend) error {
 	})
 
 	backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+
+	// Flush response
+	if err := backend.Flush(); err != nil {
+		return fmt.Errorf("failed to flush response: %v", err)
+	}
+
 	return nil
 }
 
@@ -483,6 +545,12 @@ func (s *server) handleCurrentDatabase(backend *pgproto3.Backend) error {
 	})
 
 	backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+
+	// Flush response
+	if err := backend.Flush(); err != nil {
+		return fmt.Errorf("failed to flush response: %v", err)
+	}
+
 	return nil
 }
 
@@ -542,6 +610,12 @@ func (s *server) handleBegin(connState *connectionState, backend *pgproto3.Backe
 	})
 
 	backend.Send(&pgproto3.ReadyForQuery{TxStatus: connState.getTxStatus()})
+
+	// Flush response
+	if err := backend.Flush(); err != nil {
+		return fmt.Errorf("failed to flush begin response: %v", err)
+	}
+
 	return nil
 }
 
@@ -564,6 +638,12 @@ func (s *server) handleCommit(connState *connectionState, backend *pgproto3.Back
 	})
 
 	backend.Send(&pgproto3.ReadyForQuery{TxStatus: connState.getTxStatus()})
+
+	// Flush response
+	if err := backend.Flush(); err != nil {
+		return fmt.Errorf("failed to flush commit response: %v", err)
+	}
+
 	return nil
 }
 
@@ -586,6 +666,12 @@ func (s *server) handleRollback(connState *connectionState, backend *pgproto3.Ba
 	})
 
 	backend.Send(&pgproto3.ReadyForQuery{TxStatus: connState.getTxStatus()})
+
+	// Flush response
+	if err := backend.Flush(); err != nil {
+		return fmt.Errorf("failed to flush rollback response: %v", err)
+	}
+
 	return nil
 }
 
@@ -599,6 +685,12 @@ func (s *server) handleSetTransaction(connState *connectionState, backend *pgpro
 	})
 
 	backend.Send(&pgproto3.ReadyForQuery{TxStatus: connState.getTxStatus()})
+
+	// Flush response
+	if err := backend.Flush(); err != nil {
+		return fmt.Errorf("failed to flush set response: %v", err)
+	}
+
 	return nil
 }
 

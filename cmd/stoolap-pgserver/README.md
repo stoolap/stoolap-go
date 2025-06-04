@@ -32,9 +32,24 @@ stoolap-pgserver --help
 
 ## Connecting
 
+### Database Names
+The server currently accepts only the following database names:
+- `stoolap` (recommended)
+- `postgres` (for PostgreSQL client compatibility)
+- Empty/default (uses user name as database name)
+
+Attempting to connect to any other database name will result in an error.
+
 ### Using psql:
 ```bash
+# Connect to the stoolap database (recommended)
 psql -h localhost -p 5432 -d stoolap
+
+# Or use postgres for compatibility
+psql -h localhost -p 5432 -d postgres
+
+# Username can be anything (no authentication)
+psql -h localhost -p 5432 -U anyuser -d stoolap
 ```
 
 ### Transaction example:
@@ -100,6 +115,8 @@ console.log(res.rows)
 
 ## Current Limitations
 
+- **Single database only**: The server uses one database file specified by `--database` flag
+- **Database names**: Only accepts `stoolap`, `postgres`, or empty database name
 - No SSL/TLS support
 - No authentication (accepts all connections)
 - Limited prepared statement support
