@@ -98,6 +98,7 @@ func (m *SyncInt64Map[V]) Set(key int64, value V) {
 	hash := hashFast(key)
 	bucket := &m.buckets[hash&m.mask]
 
+retry:
 	// First check if the key already exists
 	var predecessor *fnode[V]
 	var current *fnode[V]
@@ -140,55 +141,33 @@ func (m *SyncInt64Map[V]) Set(key int64, value V) {
 
 	// Insert at head if first node or predecessor is nil
 	if head == nil || predecessor == nil {
-		for {
-			// Load the current head
-			currentHead := (*fnode[V])(atomic.LoadPointer(&bucket.head))
+		// Load the current head
+		currentHead := (*fnode[V])(atomic.LoadPointer(&bucket.head))
 
-			// Set the new node's next pointer to the current head
-			atomic.StorePointer(&newNode.next, unsafe.Pointer(currentHead))
+		// Set the new node's next pointer to the current head
+		atomic.StorePointer(&newNode.next, unsafe.Pointer(currentHead))
 
-			// Try to set the new node as the new head
-			if atomic.CompareAndSwapPointer(&bucket.head, unsafe.Pointer(currentHead), unsafe.Pointer(newNode)) {
-				break
-			}
+		// Try to set the new node as the new head
+		if !atomic.CompareAndSwapPointer(&bucket.head, unsafe.Pointer(currentHead), unsafe.Pointer(newNode)) {
+			// CAS failed, retry from beginning to check if key was inserted
+			// by another thread. We must restart from the beginning to ensure
+			// we don't miss any concurrent insertions.
+			goto retry
 		}
 	} else {
 		// Insert after predecessor
-		for {
-			// Load predecessor's next
-			next := (*fnode[V])(atomic.LoadPointer(&predecessor.next))
+		// Load predecessor's next
+		next := (*fnode[V])(atomic.LoadPointer(&predecessor.next))
 
-			// Set new node's next
-			atomic.StorePointer(&newNode.next, unsafe.Pointer(next))
+		// Set new node's next
+		atomic.StorePointer(&newNode.next, unsafe.Pointer(next))
 
-			// Try to set predecessor's next to the new node
-			if atomic.CompareAndSwapPointer(&predecessor.next, unsafe.Pointer(next), unsafe.Pointer(newNode)) {
-				break
-			}
-
-			// If CAS failed, retry the entire operation
-			current = (*fnode[V])(atomic.LoadPointer(&bucket.head))
-			predecessor = nil
-
-			for current != nil && current.key != key {
-				predecessor = current
-				current = (*fnode[V])(atomic.LoadPointer(&current.next))
-			}
-
-			if current != nil && current.key == key {
-				// Key exists, update instead of insert
-				if atomic.LoadUint32(&current.deleted) == 0 {
-					current.value.Store(&value)
-					return
-				} else if atomic.CompareAndSwapUint32(&current.deleted, 1, 0) {
-					current.value.Store(&value)
-					m.count.Add(1)
-					return
-				}
-				// If we reached here, break out of this loop
-				// The outer loop will retry the insertion
-				break
-			}
+		// Try to set predecessor's next to the new node
+		if !atomic.CompareAndSwapPointer(&predecessor.next, unsafe.Pointer(next), unsafe.Pointer(newNode)) {
+			// CAS failed, retry from beginning to check if key was inserted
+			// by another thread. We must restart from the beginning to ensure
+			// we don't miss any concurrent insertions.
+			goto retry
 		}
 	}
 
