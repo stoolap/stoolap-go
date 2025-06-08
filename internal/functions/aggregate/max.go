@@ -130,19 +130,32 @@ func isEqual(a, b any) bool {
 	}
 
 	// Use type assertions for specific comparisons
-	switch a.(type) {
+	switch a := a.(type) {
 	case bool:
 		bBool, ok := b.(bool)
-		return ok && a.(bool) == bBool
+		return ok && a == bBool
+	case string:
+		bStr, ok := b.(string)
+		return ok && a == bStr
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, Int64Convertible, Float64Convertible:
 		switch b.(type) {
 		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, Int64Convertible, Float64Convertible:
 			cmpResult, ok := compareNumerics(a, b)
 			return ok && cmpResult == 0
 		}
-	case string:
-		bStr, ok := b.(string)
-		return ok && a.(string) == bStr
+	case BooleanConvertible:
+		bConvertible, ok := b.(BooleanConvertible)
+		if !ok {
+			return false // b is not a BooleanConvertible
+		}
+
+		aBool, aOk := a.AsBoolean()
+		bBool, bOk := bConvertible.AsBoolean()
+		// if a or bConvertible is not convertible to bool, return false
+		// otherwise just compare the values
+		if (aOk && bOk) && (aBool == bBool) {
+			return true
+		}
 	}
 
 	// Different types or non-primitive types that are not directly comparable
