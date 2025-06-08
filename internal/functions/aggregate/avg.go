@@ -87,6 +87,9 @@ func (f *AvgFunction) Accumulate(value any, distinct bool) {
 		} else {
 			return
 		}
+	default:
+		// do not process non-numeric types
+		return
 	}
 
 	// Handle DISTINCT case
