@@ -152,6 +152,18 @@ func isLessThan(a, b any) bool {
 		}
 		// Check if b is a basic type (bool, numeric). string > basic types
 		return !isBasicType(b)
+	case BooleanConvertible:
+		aBool, ok := a.AsBoolean()
+		if ok {
+			if bConvertible, ok := b.(BooleanConvertible); ok {
+				bBool, ok := bConvertible.AsBoolean()
+				if !ok {
+					return true // bool < other types
+				}
+				// Compare boolean values if both are convertible to bool
+				return !aBool && bBool // false < true
+			}
+		}
 	}
 
 	// For different types, compare type names for stable ordering
