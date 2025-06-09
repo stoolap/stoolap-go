@@ -82,12 +82,6 @@ func (f *FirstFunction) AccumulateOrdered(value interface{}, orderKey interface{
 		return
 	}
 
-	// In SQL, zero values might be actual data, not NULL
-	// But in our test case, some zero values seem to be unexpected
-	if val, ok := compareNumerics(value, 0); ok && val == 0 {
-		return
-	}
-
 	// Store the value and its ordering key for later sorting
 	f.orderedValues = append(f.orderedValues, struct{ Value, OrderKey interface{} }{
 		Value:    DeepCopy(value),
@@ -117,12 +111,6 @@ func (f *FirstFunction) Accumulate(value interface{}, distinct bool) {
 
 	// Skip empty strings, which should be treated like NULLs
 	if s, ok := value.(string); ok && s == "" {
-		return
-	}
-
-	// In SQL, zero values might be actual data, not NULL
-	// But in our test case, some zero values seem to be unexpected
-	if val, ok := compareNumerics(value, 0); ok && val == 0 {
 		return
 	}
 

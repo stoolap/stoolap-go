@@ -449,9 +449,9 @@ func TestFirst(t *testing.T) {
 			expected: "actual_value", // Skip empty strings like NULLs
 		},
 		{
-			name:     "FIRST with zero values - should skip zeros",
+			name:     "FIRST with zero values - should treat zeros as valid",
 			values:   []any{int64(0), uint32(0), int64(42)},
-			expected: int64(42), // Skip zero values based on implementation
+			expected: int64(0), // Treat zero values as valid
 		},
 		{
 			name:     "FIRST with single value",
@@ -520,9 +520,9 @@ func TestLast(t *testing.T) {
 			expected: "actual_value", // Skip empty strings like NULLs
 		},
 		{
-			name:     "LAST with zero values - should skip zeros",
+			name:     "LAST with zero values - should treat zeros as valid",
 			values:   []any{int64(42), int64(0), int64(0)},
-			expected: int64(42), // Skip zero values based on implementation
+			expected: int64(0), // Treat zero values as valid
 		},
 		{
 			name:     "LAST with single value",
