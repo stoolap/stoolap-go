@@ -1475,15 +1475,67 @@ func (p *Parser) parseSimpleTableExpression() Expression {
 			// Check for AS clause
 			if p.peekTokenIsKeyword("AS") {
 				p.nextToken() // consume AS
-				if !p.expectPeek(TokenIdentifier) {
-					return nil
-				}
 
-				// Set alias
-				simpleTable := tableExpr.(*SimpleTableSource)
-				simpleTable.Alias = &Identifier{
-					Token: p.curToken,
-					Value: p.curToken.Literal,
+				// Check if this is AS OF
+				if p.peekTokenIsKeyword("OF") {
+					p.nextToken() // consume OF
+
+					// Parse AS OF type (TRANSACTION or TIMESTAMP)
+					if !p.expectPeek(TokenKeyword) {
+						p.addError(fmt.Sprintf("expected TRANSACTION or TIMESTAMP after AS OF at %s", p.curToken.Position))
+						return nil
+					}
+
+					asOfType := strings.ToUpper(p.curToken.Literal)
+					if asOfType != "TRANSACTION" && asOfType != "TIMESTAMP" {
+						p.addError(fmt.Sprintf("expected TRANSACTION or TIMESTAMP after AS OF, got %s at %s", asOfType, p.curToken.Position))
+						return nil
+					}
+
+					// Parse the value
+					p.nextToken()
+					value := p.parseExpression(LOWEST)
+					if value == nil {
+						return nil
+					}
+
+					// Set AS OF clause
+					simpleTable := tableExpr.(*SimpleTableSource)
+					simpleTable.AsOf = &AsOfClause{
+						Token: p.curToken,
+						Type:  asOfType,
+						Value: value,
+					}
+
+					// Check for alias after AS OF
+					if p.peekTokenIsKeyword("AS") {
+						p.nextToken() // consume AS
+						if !p.expectPeek(TokenIdentifier) {
+							return nil
+						}
+						simpleTable.Alias = &Identifier{
+							Token: p.curToken,
+							Value: p.curToken.Literal,
+						}
+					} else if p.peekTokenIs(TokenIdentifier) {
+						p.nextToken() // consume the alias
+						simpleTable.Alias = &Identifier{
+							Token: p.curToken,
+							Value: p.curToken.Literal,
+						}
+					}
+				} else {
+					// Regular AS alias
+					if !p.expectPeek(TokenIdentifier) {
+						return nil
+					}
+
+					// Set alias
+					simpleTable := tableExpr.(*SimpleTableSource)
+					simpleTable.Alias = &Identifier{
+						Token: p.curToken,
+						Value: p.curToken.Literal,
+					}
 				}
 			} else if p.peekTokenIs(TokenIdentifier) {
 				// Implicit alias (e.g., "FROM users u")

@@ -182,6 +182,7 @@ Stoolap supports two storage modes:
 - **DDL**: CREATE/ALTER/DROP TABLE, CREATE/DROP INDEX, CREATE/DROP VIEW
 - **DML**: SELECT, INSERT, UPDATE, DELETE, MERGE
 - **Queries**: JOINs, GROUP BY, ORDER BY, LIMIT, OFFSET, subqueries, CTE (WITH), DISTINCT
+- **Temporal Queries**: AS OF TRANSACTION/TIMESTAMP for time travel queries
 - **Transactions**: BEGIN/COMMIT/ROLLBACK with isolation levels
 - **Indexing**: CREATE INDEX, unique constraints, primary keys, multi-column indexes
 - **Functions**: Aggregate and scalar functions
@@ -199,6 +200,30 @@ BEGIN TRANSACTION ISOLATION LEVEL SNAPSHOT;
 SELECT * FROM accounts WHERE id = 1;
 UPDATE accounts SET balance = balance - 100 WHERE id = 1;
 COMMIT;
+```
+
+### Temporal Queries (AS OF)
+
+Stoolap supports SQL:2011 temporal queries for accessing historical data:
+
+```sql
+-- Query data as of a specific transaction
+SELECT * FROM users AS OF TRANSACTION 42;
+
+-- Query data as of a specific timestamp
+SELECT * FROM orders AS OF TIMESTAMP '2025-06-10 14:30:00';
+
+-- Compare current and historical data
+SELECT 
+    current.balance as current_balance,
+    historical.balance as yesterday_balance
+FROM accounts current
+CROSS JOIN (
+    SELECT balance FROM accounts 
+    AS OF TIMESTAMP '2025-06-09 23:59:59'
+    WHERE id = 1
+) historical
+WHERE current.id = 1;
 ```
 
 ## Performance Optimizations

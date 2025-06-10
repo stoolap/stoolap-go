@@ -183,6 +183,10 @@ func (m *mockTransaction) SelectWithAliases(tableName string, columns []string, 
 	return nil, nil
 }
 
+func (m *mockTransaction) SelectAsOf(tableName string, columns []string, expr storage.Expression, asOfType string, asOfValue int64, originalColumns ...string) (storage.Result, error) {
+	return nil, nil
+}
+
 func (m *mockTransaction) Context() context.Context {
 	return context.Background()
 }

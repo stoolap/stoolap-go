@@ -1361,6 +1361,11 @@ type schemaPKInfo struct {
 // Cache of schema PK info to avoid expensive lookups
 var schemaPKInfoCache sync.Map
 
+// clearPKInfoCache clears the cached PK info for a table
+func clearPKInfoCache(tableName string) {
+	schemaPKInfoCache.Delete(tableName)
+}
+
 // getOrCreatePKInfo gets or creates cached PK info for a schema
 func getOrCreatePKInfo(schema storage.Schema) *schemaPKInfo {
 	// Use table name as key instead of schema pointer
@@ -1570,6 +1575,48 @@ func (mt *MVCCTable) Scan(columnIndices []int, where storage.Expression) (storag
 
 	// Create and return a scanner with the visible rows
 	return NewMVCCScanner(visibleRows, schema, columnIndices, filterExpr), nil
+}
+
+// ScanAsOf performs a temporal scan as of a specific transaction or timestamp
+func (mt *MVCCTable) ScanAsOf(columnIndices []int, where storage.Expression, temporalType string, temporalValue int64) (storage.Scanner, error) {
+	// Get schema directly from the version store
+	schema, err := mt.versionStore.GetTableSchema()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get schema: %w", err)
+	}
+
+	// For AS OF queries, we need ALL rows that existed at that point in time,
+	// regardless of current transaction visibility
+
+	// Get all row IDs - this also loads any disk-only rows into memory
+	allRowIDs := mt.versionStore.GetAllRowIDs()
+
+	// Create temporal result map
+	temporalRows := fastmap.NewInt64Map[storage.Row](len(allRowIDs))
+
+	// Get temporal versions for each row ID
+	// Since GetAllRowIDs already loaded everything into memory,
+	// the temporal methods won't need to check disk again
+	for _, rowID := range allRowIDs {
+		var version RowVersion
+		var found bool
+
+		switch temporalType {
+		case "TRANSACTION":
+			version, found = mt.versionStore.GetVisibleVersionAsOfTransaction(rowID, temporalValue)
+		case "TIMESTAMP":
+			version, found = mt.versionStore.GetVisibleVersionAsOfTimestamp(rowID, temporalValue)
+		default:
+			return nil, fmt.Errorf("unsupported temporal type: %s", temporalType)
+		}
+
+		if found && !version.IsDeleted() {
+			temporalRows.Put(rowID, version.Data)
+		}
+	}
+
+	// Create and return a scanner with the temporal rows
+	return NewMVCCScanner(temporalRows, schema, columnIndices, where), nil
 }
 
 // CreateColumn adds a column to the table

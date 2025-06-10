@@ -731,11 +731,19 @@ type TableSource interface {
 	tableSourceNode()
 }
 
+// AsOfClause represents an AS OF clause for temporal queries
+type AsOfClause struct {
+	Token Token      // The AS token
+	Type  string     // "TRANSACTION" or "TIMESTAMP"
+	Value Expression // Transaction ID or timestamp value
+}
+
 // SimpleTableSource represents a simple table name
 type SimpleTableSource struct {
 	Token Token // The table name token
 	Name  *Identifier
 	Alias *Identifier
+	AsOf  *AsOfClause // Optional AS OF clause for temporal queries
 }
 
 func (sts *SimpleTableSource) expressionNode()      {}
@@ -743,10 +751,17 @@ func (sts *SimpleTableSource) tableSourceNode()     {}
 func (sts *SimpleTableSource) TokenLiteral() string { return sts.Token.Literal }
 func (sts *SimpleTableSource) Position() Position   { return sts.Token.Position }
 func (sts *SimpleTableSource) String() string {
-	if sts.Alias != nil {
-		return fmt.Sprintf("%s AS %s", sts.Name.String(), sts.Alias.String())
+	result := sts.Name.String()
+
+	if sts.AsOf != nil {
+		result += fmt.Sprintf(" AS OF %s %s", sts.AsOf.Type, sts.AsOf.Value.String())
 	}
-	return sts.Name.String()
+
+	if sts.Alias != nil {
+		result += fmt.Sprintf(" AS %s", sts.Alias.String())
+	}
+
+	return result
 }
 
 // OnJoinCondition represents an ON condition for JOIN clause

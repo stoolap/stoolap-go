@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/stoolap/stoolap/internal/functions/contract"
 	"github.com/stoolap/stoolap/internal/functions/registry"
@@ -376,8 +377,9 @@ func (e *Executor) executeSelectWithContext(ctx context.Context, tx storage.Tran
 		return e.executeSelectWithScalarFunctions(ctx, tx, stmt)
 	}
 
-	// Extract table name from the table expression
+	// Extract table name and temporal context from the table expression
 	var tableName string
+	var temporalContext *TemporalContext
 
 	// Handle different types of table expressions
 	switch tableExpr := stmt.TableExpr.(type) {
@@ -385,8 +387,15 @@ func (e *Executor) executeSelectWithContext(ctx context.Context, tx storage.Tran
 		// Simple table name
 		tableName = tableExpr.Value
 	case *parser.SimpleTableSource:
-		// Table with optional alias
+		// Table with optional alias and AS OF clause
 		tableName = tableExpr.Name.Value
+
+		// Extract temporal context if present
+		if temporal, err := extractTemporalContext(tableExpr); err != nil {
+			return nil, fmt.Errorf("error parsing AS OF clause: %w", err)
+		} else {
+			temporalContext = temporal
+		}
 	default:
 		// For other types of table expressions, we'll need to handle JOIN
 		return e.executeSelectWithJoins(ctx, tx, stmt)
@@ -483,9 +492,35 @@ func (e *Executor) executeSelectWithContext(ctx context.Context, tx storage.Tran
 			// Check if the WHERE clause can be pushed down to storage
 			if whereExpr != nil {
 				whereExpr.PrepareForSchema(schema)
-				result, err = tx.SelectWithAliases(tableName, columns, whereExpr, columnAliases)
-				if err != nil {
-					return nil, err
+
+				// Check if we have temporal context
+				if temporalContext != nil {
+					// Convert timestamp to nanoseconds if needed
+					var temporalValue int64
+					if temporalContext.Type == "TIMESTAMP" {
+						if ts, ok := temporalContext.Value.(time.Time); ok {
+							temporalValue = ts.UnixNano()
+						} else {
+							return nil, fmt.Errorf("invalid timestamp value in temporal context")
+						}
+					} else {
+						// For TRANSACTION type, value should already be int64
+						if txnID, ok := temporalContext.Value.(int64); ok {
+							temporalValue = txnID
+						} else {
+							return nil, fmt.Errorf("invalid transaction ID value in temporal context")
+						}
+					}
+
+					result, err = tx.SelectAsOf(tableName, columns, whereExpr, temporalContext.Type, temporalValue)
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					result, err = tx.SelectWithAliases(tableName, columns, whereExpr, columnAliases)
+					if err != nil {
+						return nil, err
+					}
 				}
 
 				needsFiltering = false
@@ -493,7 +528,29 @@ func (e *Executor) executeSelectWithContext(ctx context.Context, tx storage.Tran
 		}
 
 		if needsFiltering {
-			result, err = tx.SelectWithAliases(tableName, columnsToFetch, nil, columnAliases)
+			// Check if we have temporal context
+			if temporalContext != nil {
+				// Convert timestamp to nanoseconds if needed
+				var temporalValue int64
+				if temporalContext.Type == "TIMESTAMP" {
+					if ts, ok := temporalContext.Value.(time.Time); ok {
+						temporalValue = ts.UnixNano()
+					} else {
+						return nil, fmt.Errorf("invalid timestamp value in temporal context")
+					}
+				} else {
+					// For TRANSACTION type, value should already be int64
+					if txnID, ok := temporalContext.Value.(int64); ok {
+						temporalValue = txnID
+					} else {
+						return nil, fmt.Errorf("invalid transaction ID value in temporal context")
+					}
+				}
+
+				result, err = tx.SelectAsOf(tableName, columnsToFetch, nil, temporalContext.Type, temporalValue)
+			} else {
+				result, err = tx.SelectWithAliases(tableName, columnsToFetch, nil, columnAliases)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -514,7 +571,29 @@ func (e *Executor) executeSelectWithContext(ctx context.Context, tx storage.Tran
 		}
 	} else {
 		// No WHERE clause, just fetch the columns directly
-		result, err = tx.SelectWithAliases(tableName, columns, nil, columnAliases)
+		// Check if we have temporal context
+		if temporalContext != nil {
+			// Convert timestamp to nanoseconds if needed
+			var temporalValue int64
+			if temporalContext.Type == "TIMESTAMP" {
+				if ts, ok := temporalContext.Value.(time.Time); ok {
+					temporalValue = ts.UnixNano()
+				} else {
+					return nil, fmt.Errorf("invalid timestamp value in temporal context")
+				}
+			} else {
+				// For TRANSACTION type, value should already be int64
+				if txnID, ok := temporalContext.Value.(int64); ok {
+					temporalValue = txnID
+				} else {
+					return nil, fmt.Errorf("invalid transaction ID value in temporal context")
+				}
+			}
+
+			result, err = tx.SelectAsOf(tableName, columns, nil, temporalContext.Type, temporalValue)
+		} else {
+			result, err = tx.SelectWithAliases(tableName, columns, nil, columnAliases)
+		}
 		if err != nil {
 			return nil, err
 		}

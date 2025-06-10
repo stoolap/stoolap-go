@@ -266,6 +266,8 @@ type Tx interface {
 	QueryContext(ctx context.Context, query string, args ...driver.NamedValue) (Rows, error)
 	// Prepare creates a prepared statement for the transaction
 	Prepare(query string) (Stmt, error)
+	// ID returns the transaction ID
+	ID() int64
 }
 
 // Implementation types
@@ -341,6 +343,10 @@ func (t *transaction) Commit() error {
 
 func (t *transaction) Rollback() error {
 	return t.tx.Rollback()
+}
+
+func (t *transaction) ID() int64 {
+	return t.tx.ID()
 }
 
 func (t *transaction) ExecContext(ctx context.Context, query string, args ...driver.NamedValue) (sql.Result, error) {
