@@ -352,6 +352,10 @@ type Transaction interface {
 	// SelectWithAliases executes a SELECT query with column aliases
 	// The aliases parameter maps from alias names to original column names
 	SelectWithAliases(tableName string, columnsToFetch []string, expr Expression, aliases map[string]string, originalColumns ...string) (Result, error)
+	// SelectAsOf executes a temporal SELECT query as of a specific transaction or timestamp
+	// temporalType should be "TRANSACTION" or "TIMESTAMP"
+	// temporalValue is the transaction ID or timestamp in nanoseconds
+	SelectAsOf(tableName string, columnsToFetch []string, expr Expression, temporalType string, temporalValue int64, originalColumns ...string) (Result, error)
 }
 
 // Engine represents the storage engine

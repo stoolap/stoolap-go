@@ -25,6 +25,7 @@ Stoolap is a Hybrid Transactional/Analytical Processing (HTAP) database engine t
 * [Aggregate Functions](functions/aggregate-functions) - Functions for data summarization
 * [Scalar Functions](functions/scalar-functions) - Built-in scalar functions
 * [Window Functions](sql-features/window-functions) - Row-based analytical functions
+* [Temporal Queries (AS OF)](sql-features/temporal-queries) - Time travel queries with AS OF syntax
 * [CAST Operations](sql-features/cast-operations) - Type conversion capabilities
 * [NULL Handling](sql-features/null-handling) - Working with NULL values
 * [JOIN Operations](sql-features/join-operations) - Combining data from multiple tables

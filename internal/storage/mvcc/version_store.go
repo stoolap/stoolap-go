@@ -262,6 +262,70 @@ func (vs *VersionStore) GetVisibleVersion(rowID int64, txnID int64) (RowVersion,
 	return RowVersion{}, false
 }
 
+// GetVisibleVersionAsOfTransaction gets the visible version of a row as of a specific transaction
+func (vs *VersionStore) GetVisibleVersionAsOfTransaction(rowID int64, asOfTxnID int64) (RowVersion, bool) {
+	// Check if the version store is closed
+	if vs.closed.Load() {
+		return RowVersion{}, false
+	}
+
+	// Check if the row exists in memory
+	// Note: GetAllRowIDs should be called first to ensure all disk rows are loaded
+	versionPtr, exists := vs.versions.Get(rowID)
+	if exists {
+		// Traverse the version chain from newest to oldest
+		for current := versionPtr; current != nil; current = current.prev {
+			// Check if this version was created before or at the asOf transaction
+			if current.TxnID <= asOfTxnID {
+				// This is the newest version visible at the asOf point
+				// Check if it's deleted AND the deletion happened before or at asOfTxnID
+				if current.DeletedAtTxnID != 0 && current.DeletedAtTxnID <= asOfTxnID {
+					// The row was deleted before or at the asOf point, so it's not visible
+					return RowVersion{}, false
+				}
+				// Found a visible version at the asOf point
+				return *current, true
+			}
+		}
+	}
+
+	// Row not found or all versions are newer than asOfTxnID
+	return RowVersion{}, false
+}
+
+// GetVisibleVersionAsOfTimestamp gets the visible version of a row as of a specific timestamp
+func (vs *VersionStore) GetVisibleVersionAsOfTimestamp(rowID int64, asOfTimestamp int64) (RowVersion, bool) {
+	// Check if the version store is closed
+	if vs.closed.Load() {
+		return RowVersion{}, false
+	}
+
+	// Check if the row exists in memory
+	// Note: GetAllRowIDs should be called first to ensure all disk rows are loaded
+	versionPtr, exists := vs.versions.Get(rowID)
+	if exists {
+		// Traverse the version chain from newest to oldest
+		// Find the newest version that was created before or at the asOf timestamp
+		for current := versionPtr; current != nil; current = current.prev {
+			// Check if this version was created before or at the asOf timestamp
+			if current.CreateTime <= asOfTimestamp {
+				// This is the newest version visible at the asOf timestamp
+				// If it's a deletion version (DeletedAtTxnID != 0), then the row was deleted
+				if current.DeletedAtTxnID != 0 {
+					// The deletion happened before or at the asOf timestamp
+					// The row is not visible
+					return RowVersion{}, false
+				}
+				// Found a non-deleted version visible at the asOf timestamp
+				return *current, true
+			}
+		}
+	}
+
+	// Row not found or all versions are newer than asOfTimestamp
+	return RowVersion{}, false
+}
+
 // IterateVisibleVersions iterates through visible versions for the given rowIDs
 // and calls the provided callback function for each one, avoiding any map allocation
 func (vs *VersionStore) IterateVisibleVersions(rowIDs []int64, txnID int64,
@@ -655,6 +719,44 @@ func (vs *VersionStore) GetAllVisibleVersions(txnID int64) *fastmap.Int64Map[*Ro
 type WriteSetEntry struct {
 	ReadVersion    *RowVersion // Version when first read (nil if row didn't exist)
 	ReadVersionSeq int64       // Sequence number when read
+}
+
+// GetAllRowIDs returns all row IDs in the version store
+// It also loads any disk-only rows into memory for efficient access
+func (vs *VersionStore) GetAllRowIDs() []int64 {
+	if vs.closed.Load() {
+		return nil
+	}
+
+	// Collect all row IDs from memory
+	rowIDs := make([]int64, 0)
+	vs.versions.ForEach(func(rowID int64, _ *RowVersion) bool {
+		rowIDs = append(rowIDs, rowID)
+		return true
+	})
+
+	// Check for disk-stored rows if persistence is enabled
+	if vs.engine.persistence != nil && vs.engine.persistence.IsEnabled() {
+		// Get the disk store for this table
+		if diskStore, exists := vs.engine.persistence.diskStores[vs.tableName]; exists && len(diskStore.readers) > 0 {
+			reader := diskStore.readers[len(diskStore.readers)-1]
+
+			reader.ForEach(func(rowID int64, diskVersion RowVersion) bool {
+				// Check if this row is already in memory
+				if _, exists := vs.versions.Get(rowID); !exists {
+					// Add to version store memory
+					vs.AddVersion(rowID, diskVersion)
+					// Track access time
+					vs.accessTimes.Set(rowID, GetFastTimestamp())
+					// Add to our rowIDs list
+					rowIDs = append(rowIDs, rowID)
+				}
+				return true // continue iteration
+			})
+		}
+	}
+
+	return rowIDs
 }
 
 // TransactionVersionStore holds changes specific to a transaction
@@ -1344,6 +1446,7 @@ func (vs *VersionStore) canSafelyRemove(version *RowVersion) bool {
 }
 
 // CleanupOldPreviousVersions removes previous versions that are no longer needed by any active transaction
+// and are older than the retention period (default 24 hours)
 func (vs *VersionStore) CleanupOldPreviousVersions() int {
 	// Check if the version store is closed
 	if vs.closed.Load() {
@@ -1352,6 +1455,12 @@ func (vs *VersionStore) CleanupOldPreviousVersions() int {
 
 	cleaned := 0
 
+	// TODO: Implement vs.SetRetentionPolicy(tableName, duration) to allow per-table retention configuration
+	// For now, use a default 24-hour retention period for all tables
+	retentionPeriod := 24 * time.Hour
+	now := GetFastTimestamp()
+	retentionCutoff := now - retentionPeriod.Nanoseconds()
+
 	// Get all active transaction IDs to check visibility
 	activeTransactions := make([]int64, 0)
 	vs.engine.registry.activeTransactions.ForEach(func(txnID int64, beginTS int64) bool {
@@ -1359,41 +1468,33 @@ func (vs *VersionStore) CleanupOldPreviousVersions() int {
 		return true
 	})
 
-	// If no active transactions, we can clean all previous versions
-	if len(activeTransactions) == 0 {
-		vs.versions.ForEach(func(rowID int64, version *RowVersion) bool {
-			if version.prev != nil {
-				version.prev = nil
-				cleaned++
-			}
-			return true
-		})
-		return cleaned
-	}
-
 	// Check each row to see if we can clean up old versions in the chain
 	vs.versions.ForEach(func(rowID int64, version *RowVersion) bool {
-		// Find the oldest version that any active transaction might need
+		// Find the oldest version that we need to keep
 		current := version
 		var lastNeeded *RowVersion = nil
 
 		// Traverse from newest to oldest
 		for current != nil {
-			needed := false
+			keepVersion := false
 
-			// Check if any active transaction needs this version
+			// Rule 1: Keep if needed by any active transaction
 			for _, txnID := range activeTransactions {
 				if vs.engine.registry.IsVisible(current.TxnID, txnID) {
-					// This transaction can see this version
-					needed = true
-					lastNeeded = current
+					keepVersion = true
 					break
 				}
 			}
 
-			// If this version is needed, we must keep all newer versions too
-			if needed {
-				break
+			// Rule 2: Keep if within retention period (even if no active transaction needs it)
+			// This ensures AS OF TIMESTAMP queries work for recent history
+			if !keepVersion && current.CreateTime >= retentionCutoff {
+				keepVersion = true
+			}
+
+			if keepVersion {
+				lastNeeded = current
+				// Continue checking older versions - they might still be within retention
 			}
 
 			current = current.prev
@@ -1410,8 +1511,8 @@ func (vs *VersionStore) CleanupOldPreviousVersions() int {
 			// Disconnect the chain
 			lastNeeded.prev = nil
 		} else if lastNeeded == nil && version.prev != nil {
-			// No version is needed by any active transaction (except maybe the head)
-			// Keep only the head version
+			// No version needs to be kept - can happen if all versions are very old
+			// This is unlikely with 24-hour retention but possible in edge cases
 			temp := version.prev
 			for temp != nil {
 				cleaned++

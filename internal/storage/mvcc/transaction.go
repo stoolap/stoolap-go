@@ -562,6 +562,58 @@ func (t *MVCCTransaction) SelectWithAliases(tableName string, columnsToFetch []s
 	return NewAliasedResult(baseResult, aliases), nil
 }
 
+// SelectAsOf executes a temporal SELECT query as of a specific transaction or timestamp
+func (t *MVCCTransaction) SelectAsOf(tableName string, columnsToFetch []string, filter storage.Expression, temporalType string, temporalValue int64, originalColumns ...string) (storage.Result, error) {
+	if !t.active {
+		return nil, ErrTransactionClosed
+	}
+
+	// Get the table
+	table, err := t.GetTable(tableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if the table is an MVCC table
+	mvccTable, ok := table.(*MVCCTable)
+	if !ok {
+		return nil, errors.New("table does not support temporal queries")
+	}
+
+	// Get the table schema
+	schema := table.Schema()
+
+	// Find the column indices in the schema
+	var columnIndices []int
+	if len(columnsToFetch) > 0 {
+		columnIndices = make([]int, 0, len(columnsToFetch))
+
+		// Map column names to indices
+		colMap := make(map[string]int)
+		for i, col := range schema.Columns {
+			colMap[col.Name] = i
+		}
+
+		// Look up each requested column
+		for _, colName := range columnsToFetch {
+			if idx, ok := colMap[colName]; ok {
+				columnIndices = append(columnIndices, idx)
+			} else {
+				return nil, fmt.Errorf("column not found: %s", colName)
+			}
+		}
+	}
+
+	// Use the temporal scanner
+	scanner, err := mvccTable.ScanAsOf(columnIndices, filter, temporalType, temporalValue)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create and return the result
+	return NewTableResult(t.ctx, scanner, schema, columnIndices, originalColumns...), nil
+}
+
 // CreateTable creates a new table
 func (t *MVCCTransaction) CreateTable(name string, schema storage.Schema) (storage.Table, error) {
 	t.mu.Lock()

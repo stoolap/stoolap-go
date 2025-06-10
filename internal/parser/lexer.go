@@ -158,6 +158,7 @@ var Keywords = map[string]bool{
 	"KEY":         true,
 	"DEFAULT":     true,
 	"AS":          true,
+	"OF":          true,
 	"DISTINCT":    true,
 	"ORDER":       true,
 	"BY":          true,

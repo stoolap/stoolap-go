@@ -997,6 +997,9 @@ func (e *MVCCEngine) DropTable(name string) error {
 		}
 	}
 
+	// Clear the cached PK info for this table
+	clearPKInfoCache(name)
+
 	// Remove schema and version store
 	delete(e.schemas, name)
 	delete(e.versionStores, name)
