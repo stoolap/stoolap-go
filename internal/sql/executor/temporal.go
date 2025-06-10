@@ -45,7 +45,7 @@ func extractTemporalContext(tableSource *parser.SimpleTableSource) (*TemporalCon
 				Value: v.Value,
 			}, nil
 		default:
-			return nil, fmt.Errorf("AS OF TRANSACTION requires an integer value, got %T", v)
+			return nil, fmt.Errorf("AS OF TRANSACTION requires integer value, got %T", v)
 		}
 
 	case "TIMESTAMP":
@@ -63,7 +63,7 @@ func extractTemporalContext(tableSource *parser.SimpleTableSource) (*TemporalCon
 				Value: ts,
 			}, nil
 		default:
-			return nil, fmt.Errorf("AS OF TIMESTAMP requires a string value, got %T", v)
+			return nil, fmt.Errorf("AS OF TIMESTAMP requires string value, got %T", v)
 		}
 
 	default:

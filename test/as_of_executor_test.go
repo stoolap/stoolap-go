@@ -18,7 +18,6 @@ package test
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -647,15 +646,4 @@ func TestAsOfWithJoins(t *testing.T) {
 			t.Errorf("Row %d: expected %+v, got %+v", i, exp, results[i])
 		}
 	}
-}
-
-// Helper function to check if error contains any of the given substrings
-func containsAny(s string, substrs []string) bool {
-	sLower := strings.ToLower(s)
-	for _, substr := range substrs {
-		if strings.Contains(sLower, strings.ToLower(substr)) {
-			return true
-		}
-	}
-	return false
 }
