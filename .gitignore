@@ -9,3 +9,4 @@ cmd/stoolap-pgserver/stoolap-pgserver
 stoolap.wiki/
 scripts/
 coverage.txt
+*.out
