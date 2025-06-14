@@ -210,15 +210,23 @@ func (e *Executor) processWhereSubqueries(ctx context.Context, tx storage.Transa
 		return exp, nil
 
 	case *parser.InfixExpression:
+		// Create a copy to avoid modifying the original AST
+		newExp := &parser.InfixExpression{
+			Token:    exp.Token,
+			Left:     exp.Left,
+			Operator: exp.Operator,
+			Right:    exp.Right,
+		}
+
 		// Process left side
-		processedLeft, err := e.processWhereSubqueries(ctx, tx, exp.Left)
+		processedLeft, err := e.processWhereSubqueries(ctx, tx, newExp.Left)
 		if err != nil {
 			return nil, err
 		}
-		exp.Left = processedLeft
+		newExp.Left = processedLeft
 
 		// Process right side for scalar subqueries
-		if subquery, ok := exp.Right.(*parser.ScalarSubquery); ok {
+		if subquery, ok := newExp.Right.(*parser.ScalarSubquery); ok {
 			value, err := e.executeScalarSubquery(ctx, tx, subquery)
 			if err != nil {
 				return nil, err
@@ -227,68 +235,80 @@ func (e *Executor) processWhereSubqueries(ctx context.Context, tx storage.Transa
 			// Convert the value to a parser expression
 			switch v := value.(type) {
 			case int64:
-				exp.Right = &parser.IntegerLiteral{Value: v}
+				newExp.Right = &parser.IntegerLiteral{Value: v}
 			case float64:
-				exp.Right = &parser.FloatLiteral{Value: v}
+				newExp.Right = &parser.FloatLiteral{Value: v}
 			case string:
-				exp.Right = &parser.StringLiteral{Value: v}
+				newExp.Right = &parser.StringLiteral{Value: v}
 			case bool:
-				exp.Right = &parser.BooleanLiteral{Value: v}
+				newExp.Right = &parser.BooleanLiteral{Value: v}
 			case nil:
-				exp.Right = &parser.NullLiteral{}
+				newExp.Right = &parser.NullLiteral{}
 			default:
 				// Convert other types to string
-				exp.Right = &parser.StringLiteral{Value: fmt.Sprintf("%v", v)}
+				newExp.Right = &parser.StringLiteral{Value: fmt.Sprintf("%v", v)}
 			}
 		} else {
 			// Process right side recursively
-			processedRight, err := e.processWhereSubqueries(ctx, tx, exp.Right)
+			processedRight, err := e.processWhereSubqueries(ctx, tx, newExp.Right)
 			if err != nil {
 				return nil, err
 			}
-			exp.Right = processedRight
+			newExp.Right = processedRight
 		}
 
 		// Handle EXISTS expressions in logical operators
-		if exp.Operator == "AND" || exp.Operator == "OR" {
+		if newExp.Operator == "AND" || newExp.Operator == "OR" {
 			// Check if left side is EXISTS
-			if existsExpr, ok := exp.Left.(*parser.ExistsExpression); ok {
+			if existsExpr, ok := newExp.Left.(*parser.ExistsExpression); ok {
 				exists, err := e.executeExistsSubquery(ctx, tx, existsExpr)
 				if err != nil {
 					return nil, err
 				}
-				exp.Left = &parser.BooleanLiteral{Value: exists}
+				newExp.Left = &parser.BooleanLiteral{Value: exists}
 			}
 
 			// Check if right side is EXISTS
-			if existsExpr, ok := exp.Right.(*parser.ExistsExpression); ok {
+			if existsExpr, ok := newExp.Right.(*parser.ExistsExpression); ok {
 				exists, err := e.executeExistsSubquery(ctx, tx, existsExpr)
 				if err != nil {
 					return nil, err
 				}
-				exp.Right = &parser.BooleanLiteral{Value: exists}
+				newExp.Right = &parser.BooleanLiteral{Value: exists}
 			}
 		}
 
-		return exp, nil
+		return newExp, nil
 
 	case *parser.BetweenExpression:
-		processedExpr, err := e.processWhereSubqueries(ctx, tx, exp.Expr)
+		// Create a copy to avoid modifying the original AST
+		newExp := &parser.BetweenExpression{
+			Token: exp.Token,
+			Expr:  exp.Expr,
+			Not:   exp.Not,
+			Lower: exp.Lower,
+			Upper: exp.Upper,
+		}
+
+		processedExpr, err := e.processWhereSubqueries(ctx, tx, newExp.Expr)
 		if err != nil {
 			return nil, err
 		}
-		exp.Expr = processedExpr
-		processedLower, err := e.processWhereSubqueries(ctx, tx, exp.Lower)
+		newExp.Expr = processedExpr
+
+		processedLower, err := e.processWhereSubqueries(ctx, tx, newExp.Lower)
 		if err != nil {
 			return nil, err
 		}
-		exp.Lower = processedLower
-		processedUpper, err := e.processWhereSubqueries(ctx, tx, exp.Upper)
+		newExp.Lower = processedLower
+
+		processedUpper, err := e.processWhereSubqueries(ctx, tx, newExp.Upper)
 		if err != nil {
 			return nil, err
 		}
-		exp.Upper = processedUpper
-		return exp, nil
+		newExp.Upper = processedUpper
+
+		return newExp, nil
 
 	case *parser.ExistsExpression:
 		// Execute the EXISTS subquery
@@ -312,16 +332,20 @@ func (e *Executor) processWhereSubqueries(ctx context.Context, tx storage.Transa
 				return &parser.BooleanLiteral{Value: !exists}, nil
 			}
 		}
-		// For other prefix expressions, process the right side recursively
-		processedRight, err := e.processWhereSubqueries(ctx, tx, exp.Right)
+		// For other prefix expressions, create a copy before processing
+		newExp := &parser.PrefixExpression{
+			Token:    exp.Token,
+			Operator: exp.Operator,
+			Right:    exp.Right,
+		}
+
+		processedRight, err := e.processWhereSubqueries(ctx, tx, newExp.Right)
 		if err != nil {
 			return nil, err
 		}
-		return &parser.PrefixExpression{
-			Token:    exp.Token,
-			Operator: exp.Operator,
-			Right:    processedRight,
-		}, nil
+		newExp.Right = processedRight
+
+		return newExp, nil
 
 	default:
 		// For other expression types, return as is
