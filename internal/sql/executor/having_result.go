@@ -32,6 +32,7 @@ type HavingFilteredResult struct {
 	// Current state
 	currentRow   storage.Row
 	currentValid bool
+	colIndex     map[string]int // Column index map for array-based evaluation
 }
 
 // Columns returns the column names from the underlying result
@@ -42,36 +43,46 @@ func (h *HavingFilteredResult) Columns() []string {
 // Next advances to the next row that matches the HAVING clause
 func (h *HavingFilteredResult) Next() bool {
 	for h.result.Next() {
-		// Get the current row as a map
+		// Get the current row
 		row := h.result.Row()
 		if row == nil {
 			continue
 		}
 
-		// Build column map
+		// Use array-based evaluation if available
 		columns := h.result.Columns()
-		rowMap := make(map[string]storage.ColumnValue, len(columns))
-		for i, col := range columns {
-			if i < len(row) {
-				rowMap[col] = row[i]
 
-				// Also add reverse alias mapping for HAVING clause
-				// If this column has an alias that maps to an aggregate expression,
-				// add the aggregate expression as a key too
+		// Build column index map if not already built
+		if h.colIndex == nil {
+			h.colIndex = make(map[string]int)
+			for i, col := range columns {
+				h.colIndex[col] = i
+
+				// Also add reverse alias mapping
 				if h.evaluator.columnAliases != nil {
-					// Check if this column (e.g., "total") maps to an aggregate (e.g., "SUM(amount)")
 					if aggExpr, ok := h.evaluator.columnAliases[col]; ok {
-						rowMap[aggExpr] = row[i]
+						h.colIndex[aggExpr] = i
 					}
 				}
 			}
 		}
 
+		// Set row data in evaluator using array
+		h.evaluator.SetRowArray(row, columns, h.colIndex)
+
 		// Evaluate HAVING clause
-		match, err := h.evaluator.EvaluateHavingClause(h.havingExpr, rowMap)
+		result, err := h.evaluator.Evaluate(h.havingExpr)
 		if err != nil {
 			// Skip rows that cause evaluation errors
 			continue
+		}
+
+		// Check if result is true
+		var match bool
+		if boolVal, ok := result.(storage.ColumnValue); ok {
+			if b, ok := boolVal.AsInterface().(bool); ok {
+				match = b
+			}
 		}
 
 		if match {

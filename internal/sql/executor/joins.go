@@ -40,7 +40,7 @@ func (e *Executor) ExecuteJoinWithRegistry(ctx context.Context, joinSource *pars
 	if leftSource == nil {
 		return nil, fmt.Errorf("left side of JOIN is not a valid table source")
 	}
-	leftResult, leftAlias, err := e.executeTableSourceWithRegistry(ctx, leftSource, evaluator, params)
+	leftResult, _, err := e.executeTableSourceWithRegistry(ctx, leftSource, evaluator, params)
 	if err != nil {
 		return nil, fmt.Errorf("error executing left side of JOIN: %w", err)
 	}
@@ -50,7 +50,7 @@ func (e *Executor) ExecuteJoinWithRegistry(ctx context.Context, joinSource *pars
 	if rightSource == nil {
 		return nil, fmt.Errorf("right side of JOIN is not a valid table source")
 	}
-	rightResult, rightAlias, err := e.executeTableSourceWithRegistry(ctx, rightSource, evaluator, params)
+	rightResult, _, err := e.executeTableSourceWithRegistry(ctx, rightSource, evaluator, params)
 	if err != nil {
 		leftResult.Close()
 		return nil, fmt.Errorf("error executing right side of JOIN: %w", err)
@@ -85,19 +85,32 @@ func (e *Executor) ExecuteJoinWithRegistry(ctx context.Context, joinSource *pars
 		}
 	}
 
-	// Create the join result using the original implementation
-	// TODO: Fix streaming join implementation and re-enable
-	joinResult := NewJoinResult(
-		leftResult,
-		rightResult,
-		joinType,
-		joinCond,
-		evaluator,
-		leftAlias,
-		rightAlias,
-	)
+	// Convert joinType string to parser.JoinType
+	var parserJoinType parser.JoinType
+	switch joinType {
+	case "INNER":
+		parserJoinType = parser.InnerJoin
+	case "LEFT":
+		parserJoinType = parser.LeftJoin
+	case "RIGHT":
+		parserJoinType = parser.RightJoin
+	case "FULL":
+		parserJoinType = parser.FullJoin
+	case "CROSS":
+		parserJoinType = parser.CrossJoin
+	default:
+		leftResult.Close()
+		rightResult.Close()
+		return nil, fmt.Errorf("unsupported join type: %s", joinType)
+	}
 
-	return joinResult, nil
+	// Use efficient hash join
+	hashJoinResult, err := NewHashJoinResult(leftResult, rightResult, parserJoinType, joinCond, evaluator)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create join: %w", err)
+	}
+
+	return hashJoinResult, nil
 }
 
 // executeTableSourceWithRegistry executes a table source with CTE registry
@@ -133,7 +146,7 @@ func (e *Executor) executeTableSourceWithRegistry(ctx context.Context, tableSour
 			return nil, "", fmt.Errorf("error getting table %s: %w", tableName, err)
 		}
 
-		// Get columns to scan
+		// Get columns to scan - we need to qualify them with table alias for joins
 		columns := make([]string, 0)
 		for _, col := range table.Schema().Columns {
 			columns = append(columns, col.Name)
@@ -151,7 +164,10 @@ func (e *Executor) executeTableSourceWithRegistry(ctx context.Context, tableSour
 			tableAlias = source.Alias.Value
 		}
 
-		return result, tableAlias, nil
+		// Wrap the result to add table qualification to column names
+		qualifiedResult := NewQualifiedResult(result, tableAlias)
+
+		return qualifiedResult, tableAlias, nil
 
 	case *parser.SubqueryTableSource:
 		// Subquery table source
@@ -277,19 +293,8 @@ func isAllColumns(columns []parser.Expression) bool {
 	return false
 }
 
-// ProjectedColumnsResult wraps a result to project specific columns
-type ProjectedColumnsResult struct {
-	baseResult       storage.Result
-	columns          []parser.Expression
-	evaluator        *Evaluator
-	projectedColumns []string
-	currentRow       []storage.ColumnValue
-}
-
 // applyColumnProjection applies a column projection to a result
 func applyColumnProjection(result storage.Result, columns []parser.Expression) (storage.Result, error) {
-	evaluator := NewEvaluator(context.Background(), nil)
-
 	// Build the list of projected column names
 	projectedColumns := make([]string, len(columns))
 
@@ -308,150 +313,6 @@ func applyColumnProjection(result storage.Result, columns []parser.Expression) (
 		}
 	}
 
-	return &ProjectedColumnsResult{
-		baseResult:       result,
-		columns:          columns,
-		evaluator:        evaluator,
-		projectedColumns: projectedColumns,
-		currentRow:       make([]storage.ColumnValue, len(columns)),
-	}, nil
-}
-
-// Next advances to the next row
-func (r *ProjectedColumnsResult) Next() bool {
-	if !r.baseResult.Next() {
-		return false
-	}
-
-	// Get the base row and columns
-	baseRow := r.baseResult.Row()
-	baseColumns := r.baseResult.Columns()
-
-	// Create a row map for the evaluator
-	rowMap := make(map[string]storage.ColumnValue)
-	for i, col := range baseColumns {
-		if i < len(baseRow) {
-			rowMap[col] = baseRow[i]
-		}
-	}
-
-	// Evaluate each projected column
-	for i, col := range r.columns {
-		var value storage.ColumnValue
-
-		switch expr := col.(type) {
-		case *parser.Identifier:
-			// Simple column reference - check both with and without table prefix
-			if val, ok := rowMap[expr.Value]; ok {
-				value = val
-			} else {
-				// Try to find the column by checking all columns
-				found := false
-				for colName, colVal := range rowMap {
-					// Check if column name matches after removing table prefix
-					parts := strings.Split(colName, ".")
-					if len(parts) > 1 && parts[len(parts)-1] == expr.Value {
-						value = colVal
-						found = true
-						break
-					}
-				}
-				if !found {
-					// Use a NULL TEXT value since we're projecting column names
-					value = storage.NewNullValue(storage.TEXT)
-				}
-			}
-
-		case *parser.QualifiedIdentifier:
-			// Table-qualified column reference
-			fullName := fmt.Sprintf("%s.%s", expr.Qualifier.Value, expr.Name.Value)
-			if val, ok := rowMap[fullName]; ok {
-				value = val
-			} else {
-				value = storage.NewNullValue(storage.TEXT)
-			}
-
-		case *parser.AliasedExpression:
-			// Handle aliased expressions recursively
-			// Set the row map on the evaluator before evaluating
-			r.evaluator.WithRow(rowMap)
-			baseValue, err := r.evaluator.Evaluate(expr.Expression)
-			if err != nil {
-				value = storage.NewNullValue(storage.TEXT)
-			} else {
-				// Check if the evaluated value is a NULL ColumnValue
-				if baseValue != nil && baseValue.IsNull() {
-					value = baseValue // Use the NULL value directly
-				} else {
-					value = storage.ValueToColumnValue(baseValue, storage.TEXT)
-				}
-			}
-
-		default:
-			// For other expressions, use the evaluator
-			// Set the row map on the evaluator before evaluating
-			r.evaluator.WithRow(rowMap)
-			evaluatedValue, err := r.evaluator.Evaluate(expr)
-			if err != nil {
-				value = storage.NewNullValue(storage.TEXT)
-			} else {
-				value = evaluatedValue
-			}
-		}
-
-		r.currentRow[i] = value
-	}
-
-	return true
-}
-
-// Row returns the current row
-func (r *ProjectedColumnsResult) Row() storage.Row {
-	return r.currentRow
-}
-
-// Columns returns the column names
-func (r *ProjectedColumnsResult) Columns() []string {
-	return r.projectedColumns
-}
-
-// Close closes the result
-func (r *ProjectedColumnsResult) Close() error {
-	return r.baseResult.Close()
-}
-
-// Context returns the context
-func (r *ProjectedColumnsResult) Context() context.Context {
-	return r.baseResult.Context()
-}
-
-// Scan scans the current row into dest
-func (r *ProjectedColumnsResult) Scan(dest ...interface{}) error {
-	if len(dest) != len(r.currentRow) {
-		return fmt.Errorf("scan: expected %d destination arguments, got %d", len(r.currentRow), len(dest))
-	}
-
-	for i, val := range r.currentRow {
-		if err := storage.ScanColumnValueToDestination(val, dest[i]); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// RowsAffected returns 0 for SELECT queries
-func (r *ProjectedColumnsResult) RowsAffected() int64 {
-	return r.baseResult.RowsAffected()
-}
-
-// LastInsertID returns 0 for SELECT queries
-func (r *ProjectedColumnsResult) LastInsertID() int64 {
-	return r.baseResult.LastInsertID()
-}
-
-// WithAliases applies aliases to the result
-func (r *ProjectedColumnsResult) WithAliases(aliases map[string]string) storage.Result {
-	r.baseResult = r.baseResult.WithAliases(aliases)
-	return r
+	// Use the optimized ArrayProjectedResult
+	return NewArrayProjectedResult(result, projectedColumns, columns, GetGlobalFunctionRegistry()), nil
 }

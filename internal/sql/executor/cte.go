@@ -47,63 +47,34 @@ func (r *CTERegistry) Execute(ctx context.Context, e *Executor, tx storage.Trans
 			return fmt.Errorf("failed to execute CTE '%s': %w", cte.Name.Value, err)
 		}
 
-		// Materialize the result so it can be accessed multiple times
-		columns := result.Columns()
-		rows := make([]map[string]storage.ColumnValue, 0)
-
-		for result.Next() {
-			row := result.Row()
-			if row != nil {
-				rowMap := make(map[string]storage.ColumnValue, len(columns))
-				for i, col := range columns {
-					if i < len(row) {
-						rowMap[col] = row[i]
-					}
-				}
-				rows = append(rows, rowMap)
-			}
+		// Materialize the result using columnar storage for efficiency
+		columnarResult, err := NewColumnarResult(result)
+		if err != nil {
+			return fmt.Errorf("failed to materialize CTE '%s': %w", cte.Name.Value, err)
 		}
 		result.Close()
 
-		// Create a materialized result
-		materializedResult := &MaterializedResult{
-			columns: columns,
-			rows:    rows,
-			current: -1,
-		}
+		// Use columnar result as the materialized result
+		var materializedResult storage.Result = columnarResult
 
 		// Handle column aliases if specified
 		if len(cte.ColumnNames) > 0 {
-			aliasedColumns := make([]string, len(cte.ColumnNames))
+			// Build alias map
+			columns := columnarResult.Columns()
+			aliases := make(map[string]string)
 			for i, alias := range cte.ColumnNames {
-				aliasedColumns[i] = alias.Value
-			}
-
-			// Update row maps to use aliased column names
-			aliasedRows := make([]map[string]storage.ColumnValue, len(rows))
-			for i, row := range rows {
-				aliasedRow := make(map[string]storage.ColumnValue)
-				for j, aliasCol := range aliasedColumns {
-					if j < len(columns) {
-						originalCol := columns[j]
-						if val, ok := row[originalCol]; ok {
-							aliasedRow[aliasCol] = val
-						}
-					}
+				if i < len(columns) {
+					aliases[columns[i]] = alias.Value
 				}
-				aliasedRows[i] = aliasedRow
 			}
 
-			materializedResult = &MaterializedResult{
-				columns: aliasedColumns,
-				rows:    aliasedRows,
-				current: -1,
-			}
+			// Apply aliases to the columnar result
+			materializedResult = columnarResult.WithAliases(aliases)
 		}
 
 		// Store the materialized result
 		r.materialized[cte.Name.Value] = materializedResult
-		r.schemas[cte.Name.Value] = materializedResult.columns
+		r.schemas[cte.Name.Value] = materializedResult.Columns()
 	}
 	return nil
 }
@@ -115,13 +86,16 @@ func (r *CTERegistry) GetCTE(name string) (storage.Result, bool) {
 		return nil, false
 	}
 
-	// Return a fresh copy of the materialized result so it can be read from the beginning
-	if mr, ok := result.(*MaterializedResult); ok {
-		return &MaterializedResult{
-			columns: mr.columns,
-			rows:    mr.rows,
-			current: -1,
-		}, true
+	// Reset columnar results so they can be read from the beginning
+	if cr, ok := result.(*ColumnarResult); ok {
+		cr.Reset()
+		return cr, true
+	}
+
+	// Reset array results so they can be read from the beginning
+	if ar, ok := result.(*ArrayResult); ok {
+		ar.Reset()
+		return ar, true
 	}
 
 	return result, exists
@@ -174,7 +148,9 @@ func (e *Executor) processCTESelect(ctx context.Context, tx storage.Transaction,
 	// Apply WHERE clause if present (BEFORE aggregation)
 	if stmt.Where != nil {
 		// Process any subqueries in the WHERE clause
-		processedWhere, err := e.processWhereSubqueries(ctx, tx, stmt.Where)
+		var processedWhere parser.Expression
+		var err error
+		processedWhere, err = e.processWhereSubqueries(ctx, tx, stmt.Where)
 		if err != nil {
 			return nil, fmt.Errorf("error processing subqueries in WHERE clause: %w", err)
 		}
@@ -223,8 +199,8 @@ func (e *Executor) processCTESelect(ctx context.Context, tx storage.Transaction,
 			}
 		}
 
-		// Use ProjectedResult to select only the requested columns
-		cteResult = NewProjectedResult(cteResult, columnNames, stmt.Columns, e.functionRegistry)
+		// Use ArrayProjectedResult for better performance
+		cteResult = NewArrayProjectedResult(cteResult, columnNames, stmt.Columns, e.functionRegistry)
 	}
 
 	// Apply ORDER BY, LIMIT, OFFSET if needed

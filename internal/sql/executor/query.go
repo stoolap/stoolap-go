@@ -163,12 +163,20 @@ func (e *Executor) executeCountStar(ctx context.Context, tx storage.Transaction,
 	// This is especially important for BETWEEN conditions, where we can only push down
 	// part of the condition to the storage layer
 	if stmt.Where != nil {
+		// Process any subqueries in the WHERE clause first
+		var processedWhere parser.Expression
+		var err error
+		processedWhere, err = e.processWhereSubqueries(ctx, tx, stmt.Where)
+		if err != nil {
+			return nil, fmt.Errorf("error processing subqueries in WHERE clause: %w", err)
+		}
+
 		// Apply SQL-level filtering to handle expressions that can't be pushed down to storage
 		// The SQL-level filter will reevaluate the WHERE clause on each row
 		evaluator := NewEvaluator(ctx, e.functionRegistry)
 		result = &FilteredResult{
 			result:       result,
-			whereExpr:    stmt.Where,
+			whereExpr:    processedWhere,
 			evaluator:    evaluator,
 			currentRow:   nil,
 			currentValid: false,
@@ -791,7 +799,7 @@ func (e *Executor) executeSelectWithContext(ctx context.Context, tx storage.Tran
 
 	// If we have literal columns or added extra columns for WHERE, wrap the result to project
 	if len(literalColumns) > 0 || extraColumnsAdded {
-		result = NewProjectedResult(result, columns, stmt.Columns, e.functionRegistry)
+		result = NewArrayProjectedResult(result, columns, stmt.Columns, e.functionRegistry)
 	}
 
 	// Apply DISTINCT if specified - must be after filtering but before ordering

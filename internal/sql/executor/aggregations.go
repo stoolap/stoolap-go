@@ -56,7 +56,7 @@ func (e *Executor) executeSelectWithJoinsAndAggregation(ctx context.Context, tx 
 func (e *Executor) executeAggregationOnResult(ctx context.Context, result storage.Result, stmt *parser.SelectStatement) (storage.Result, error) {
 	// First, we need to materialize the result if it's not already materialized
 	// This is necessary because we'll need to iterate through it multiple times
-	materializedRows := make([]map[string]storage.ColumnValue, 0)
+	materializedRows := make([]storage.Row, 0)
 	columns := result.Columns()
 
 	// Build a column index map for faster lookups
@@ -84,15 +84,8 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 		if row == nil {
 			continue
 		}
-
-		// Convert the row to a map for easier access
-		rowMap := make(map[string]storage.ColumnValue, len(columns))
-		for i, col := range columns {
-			if i < len(row) {
-				rowMap[col] = row[i]
-			}
-		}
-		materializedRows = append(materializedRows, rowMap)
+		// Store the row directly without converting to map
+		materializedRows = append(materializedRows, row)
 	}
 
 	// Close the original result
@@ -255,7 +248,7 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 	// If we have no GROUP BY but have aggregation functions, it's a global aggregation
 	if stmt.GroupBy == nil && len(aggregations) > 0 {
 		// Special case for global aggregation
-		result := e.executeGlobalAggregationOnMaterialized(ctx, materializedRows, columns, aggregations, unqualifiedColMap)
+		result := e.executeGlobalAggregationOnMaterialized(ctx, materializedRows, columns, aggregations, colIndexMap, unqualifiedColMap)
 
 		// If we have a HAVING clause, apply it to the aggregated result
 		if stmt.Having != nil {
@@ -283,15 +276,10 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 		return result, nil
 	}
 
-	// For GROUP BY aggregation, use the existing AggregateResult type
-	// Create a memory result that wraps our materialized rows
-	memoryResult := &MaterializedResult{
-		columns: columns,
-		rows:    materializedRows,
-		current: -1,
-	}
+	// For GROUP BY aggregation, create an array result
+	memoryResult := NewArrayResult(columns, materializedRows)
 
-	// Pass the unqualified column map to AggregateResult for proper column resolution
+	// Pass the unqualified column map to aggregate result for proper column resolution
 	// We need to embed it in the aliases map with a special prefix
 	enhancedAliases := make(map[string]string)
 	for k, v := range aliases {
@@ -302,13 +290,27 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 		enhancedAliases["__unqual_"+unqual] = qual
 	}
 
-	// Perform the aggregation
-	var aggregateResult storage.Result = &AggregateResult{
-		baseResult:     memoryResult,
-		functions:      aggregations,
-		groupByColumns: groupByColumns,
-		aliases:        enhancedAliases,
+	// Build column names for the result
+	resultColumns := make([]string, 0)
+
+	// Add group by columns first
+	if groupByColumns != nil {
+		resultColumns = append(resultColumns, groupByColumns...)
 	}
+
+	// Add function columns
+	for _, fn := range aggregations {
+		resultColumns = append(resultColumns, fn.GetColumnName())
+	}
+
+	// Perform the aggregation
+	var aggregateResult storage.Result = NewArrayAggregateResult(
+		memoryResult,
+		resultColumns,
+		aggregations,
+		groupByColumns,
+		enhancedAliases,
+	)
 
 	// If we have a HAVING clause, apply it to the aggregated result
 	if stmt.Having != nil {
@@ -337,7 +339,7 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 }
 
 // executeGlobalAggregationOnMaterialized performs global aggregation on materialized rows
-func (e *Executor) executeGlobalAggregationOnMaterialized(ctx context.Context, rows []map[string]storage.ColumnValue, columns []string, aggregations []*SqlFunction, unqualifiedColMap map[string]string) storage.Result {
+func (e *Executor) executeGlobalAggregationOnMaterialized(ctx context.Context, rows []storage.Row, columns []string, aggregations []*SqlFunction, colIndexMap map[string]int, unqualifiedColMap map[string]string) storage.Result {
 	// Create result rows - one row for global aggregation
 	resultRows := make([][]interface{}, 0, 1)
 
@@ -403,26 +405,26 @@ func (e *Executor) executeGlobalAggregationOnMaterialized(ctx context.Context, r
 						resultValues[i] = distinctMap
 					}
 
-					// Find the column value
+					// Find the column value using index
 					resolvedCol := resolveColumnName(agg.Column, columns, unqualifiedColMap)
-					if val, ok := row[resolvedCol]; ok && val != nil {
-						distinctMap[val.AsInterface()] = true
+					if idx, ok := colIndexMap[resolvedCol]; ok && idx < len(row) && row[idx] != nil {
+						distinctMap[row[idx].AsInterface()] = true
 						resultValues[i] = distinctMap
 					}
 				} else {
 					// Regular COUNT - increment for non-NULL values
 					resolvedCol := resolveColumnName(agg.Column, columns, unqualifiedColMap)
-					if val, ok := row[resolvedCol]; ok && val != nil {
+					if idx, ok := colIndexMap[resolvedCol]; ok && idx < len(row) && row[idx] != nil {
 						resultValues[i] = resultValues[i].(int64) + 1
 					}
 				}
 			} else {
 				// For other aggregate functions, use the stored instance
 				if aggFuncInstances[i] != nil {
-					// Find the column value
+					// Find the column value using index
 					resolvedCol := resolveColumnName(agg.Column, columns, unqualifiedColMap)
-					if val, ok := row[resolvedCol]; ok && val != nil {
-						aggFuncInstances[i].Accumulate(val.AsInterface(), agg.IsDistinct)
+					if idx, ok := colIndexMap[resolvedCol]; ok && idx < len(row) && row[idx] != nil {
+						aggFuncInstances[i].Accumulate(row[idx].AsInterface(), agg.IsDistinct)
 					}
 				}
 			}
@@ -1033,7 +1035,8 @@ func (e *Executor) executeSelectWithAggregation(ctx context.Context, tx storage.
 	var whereExpr parser.Expression
 	if stmt.Where != nil {
 		// Process any subqueries in the WHERE clause first
-		processedWhere, err := e.processWhereSubqueries(ctx, tx, stmt.Where)
+		var processedWhere parser.Expression
+		processedWhere, err = e.processWhereSubqueries(ctx, tx, stmt.Where)
 		if err != nil {
 			return nil, fmt.Errorf("error processing subqueries in WHERE clause: %w", err)
 		}
@@ -1075,11 +1078,6 @@ func (e *Executor) executeSelectWithAggregation(ctx context.Context, tx storage.
 
 			// Apply the complete alias map to the evaluator
 			evaluator.WithColumnAliases(havingAliases)
-
-			// Before wrapping, ensure the AggregateResult aliases are set
-			if aggResult, ok := result.(*AggregateResult); ok {
-				aggResult.aliases = havingAliases
-			}
 
 			// Use HavingFilteredResult for HAVING clauses
 			result = &HavingFilteredResult{
@@ -1144,13 +1142,27 @@ func (e *Executor) executeSelectWithAggregation(ctx context.Context, tx storage.
 		}
 	}
 
-	// Perform the aggregation
-	var result storage.Result = &AggregateResult{
-		baseResult:     baseResult,
-		functions:      aggregations,
-		groupByColumns: groupByColumns,
-		aliases:        aliases,
+	// Build column names for the result
+	resultColumns := make([]string, 0)
+
+	// Add group by columns first
+	if groupByColumns != nil {
+		resultColumns = append(resultColumns, groupByColumns...)
 	}
+
+	// Add function columns
+	for _, fn := range aggregations {
+		resultColumns = append(resultColumns, fn.GetColumnName())
+	}
+
+	// Perform the aggregation
+	var result storage.Result = NewArrayAggregateResult(
+		baseResult,
+		resultColumns,
+		aggregations,
+		groupByColumns,
+		aliases,
+	)
 
 	// If we have a HAVING clause, apply it to the aggregated result
 	if stmt.Having != nil {

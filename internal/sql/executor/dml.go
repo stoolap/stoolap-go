@@ -830,7 +830,8 @@ func (e *Executor) executeUpdateWithContext(ctx context.Context, tx storage.Tran
 	var updateExpr storage.Expression
 	if stmt.Where != nil {
 		// First, process any subqueries in the WHERE clause
-		processedWhere, err := e.processWhereSubqueries(ctx, tx, stmt.Where)
+		var processedWhere parser.Expression
+		processedWhere, err = e.processWhereSubqueries(ctx, tx, stmt.Where)
 		if err != nil {
 			return 0, fmt.Errorf("error processing subqueries in WHERE clause: %w", err)
 		}
@@ -905,7 +906,8 @@ func (e *Executor) executeDeleteWithContext(ctx context.Context, tx storage.Tran
 	var deleteExpr storage.Expression
 	if stmt.Where != nil {
 		// First, process any subqueries in the WHERE clause
-		processedWhere, err := e.processWhereSubqueries(ctx, tx, stmt.Where)
+		var processedWhere parser.Expression
+		processedWhere, err = e.processWhereSubqueries(ctx, tx, stmt.Where)
 		if err != nil {
 			return 0, fmt.Errorf("error processing subqueries in WHERE clause: %w", err)
 		}
@@ -954,7 +956,6 @@ func CreateWhereExpression(ctx context.Context, expr parser.Expression, registry
 	}
 
 	// Debug: print what we're converting
-	// fmt.Printf("DEBUG createWhereExpression: converting %T: %s\n", expr, expr.String())
 
 	// Handle NOT expressions (implemented as PrefixExpression with operator "NOT")
 	if prefixExpr, ok := expr.(*parser.PrefixExpression); ok && prefixExpr.Operator == "NOT" {
@@ -1198,6 +1199,37 @@ func CreateWhereExpression(ctx context.Context, expr parser.Expression, registry
 					}
 				}
 			}
+		}
+	}
+
+	// Special handling for optimized hash-based IN expressions
+	if inExpr, ok := expr.(*parser.InExpressionHash); ok {
+		// If NOT IN with NULL, we cannot push down to storage
+		// SQL standard: NOT IN with NULL must return NULL for all rows
+		if inExpr.Not && inExpr.HasNull {
+			// Return nil to force SQL-level evaluation
+			return nil
+		}
+
+		// Extract column name from the left side
+		var columnName string
+		if col, ok := inExpr.Left.(*parser.Identifier); ok {
+			columnName = col.Value
+		} else {
+			return nil
+		}
+
+		// Convert hash set to value list
+		values := make([]interface{}, 0, len(inExpr.ValueSet))
+		for val := range inExpr.ValueSet {
+			values = append(values, val)
+		}
+
+		// Create storage IN expression
+		return &expression.InListExpression{
+			Column: columnName,
+			Values: values,
+			Not:    inExpr.Not,
 		}
 	}
 
