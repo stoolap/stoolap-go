@@ -86,10 +86,13 @@ func (r *CTERegistry) GetCTE(name string) (storage.Result, bool) {
 		return nil, false
 	}
 
-	// Reset columnar results so they can be read from the beginning
+	// Clone columnar results so each use gets its own instance
+	// This is important when different queries apply different filters
 	if cr, ok := result.(*ColumnarResult); ok {
-		cr.Reset()
-		return cr, true
+		// Clone the columnar result to avoid shared state issues
+		cloned := cr.Clone()
+		cloned.Reset()
+		return cloned, true
 	}
 
 	// Reset array results so they can be read from the beginning

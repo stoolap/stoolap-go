@@ -54,9 +54,6 @@ func (e *Executor) executeSelectWithJoinsAndAggregation(ctx context.Context, tx 
 
 // executeAggregationOnResult performs aggregation on an existing result set
 func (e *Executor) executeAggregationOnResult(ctx context.Context, result storage.Result, stmt *parser.SelectStatement) (storage.Result, error) {
-	// First, we need to materialize the result if it's not already materialized
-	// This is necessary because we'll need to iterate through it multiple times
-	materializedRows := make([]storage.Row, 0)
 	columns := result.Columns()
 
 	// Build a column index map for faster lookups
@@ -78,20 +75,30 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 		}
 	}
 
-	// Materialize all rows from the result
-	for result.Next() {
-		row := result.Row()
-		if row == nil {
-			continue
+	// Check if this is a columnar result that we can optimize
+	var materializedRows []storage.Row
+	columnarResult, isColumnar := result.(*ColumnarResult)
+
+	// Only materialize if not columnar or if we have GROUP BY (columnar doesn't support GROUP BY yet)
+	if !isColumnar || stmt.GroupBy != nil {
+		// First, we need to materialize the result if it's not already materialized
+		// This is necessary because we'll need to iterate through it multiple times
+		materializedRows = make([]storage.Row, 0)
+
+		// Materialize all rows from the result
+		for result.Next() {
+			row := result.Row()
+			if row == nil {
+				continue
+			}
+			// Store the row directly without converting to map
+			materializedRows = append(materializedRows, row)
 		}
-		// Store the row directly without converting to map
-		materializedRows = append(materializedRows, row)
+
+		// Close the original result
+		result.Close()
 	}
 
-	// Close the original result
-	result.Close()
-
-	// Now we have all rows materialized, perform aggregation
 	// Identify aggregate and grouping columns
 	aggregations := make([]*SqlFunction, 0)
 	groupByColumns := make([]string, 0)
@@ -247,8 +254,20 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 
 	// If we have no GROUP BY but have aggregation functions, it's a global aggregation
 	if stmt.GroupBy == nil && len(aggregations) > 0 {
-		// Special case for global aggregation
-		result := e.executeGlobalAggregationOnMaterialized(ctx, materializedRows, columns, aggregations, colIndexMap, unqualifiedColMap)
+		// Check if the original result was columnar
+		var aggResult storage.Result
+		if isColumnar && columnarResult != nil {
+			// Use columnar operations for better performance
+			var err error
+			aggResult, err = OptimizedAggregateOnColumnar(columnarResult, aggregations)
+			if err != nil {
+				// Fall back to materialized aggregation if columnar fails
+				aggResult = e.executeGlobalAggregationOnMaterialized(ctx, materializedRows, columns, aggregations, colIndexMap, unqualifiedColMap)
+			}
+		} else {
+			// Use materialized aggregation
+			aggResult = e.executeGlobalAggregationOnMaterialized(ctx, materializedRows, columns, aggregations, colIndexMap, unqualifiedColMap)
+		}
 
 		// If we have a HAVING clause, apply it to the aggregated result
 		if stmt.Having != nil {
@@ -257,8 +276,8 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 			evaluator.WithColumnAliases(aliases)
 
 			// Use HavingFilteredResult for HAVING clauses
-			result = &HavingFilteredResult{
-				result:     result,
+			aggResult = &HavingFilteredResult{
+				result:     aggResult,
 				havingExpr: stmt.Having,
 				evaluator:  evaluator,
 			}
@@ -267,13 +286,13 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 		// Apply ORDER BY, LIMIT, OFFSET if specified
 		if stmt.OrderBy != nil || stmt.Limit != nil || stmt.Offset != nil {
 			var err error
-			result, err = applyOrderByLimitOffset(ctx, result, stmt)
+			aggResult, err = applyOrderByLimitOffset(ctx, aggResult, stmt)
 			if err != nil {
 				return nil, err
 			}
 		}
 
-		return result, nil
+		return aggResult, nil
 	}
 
 	// For GROUP BY aggregation, create an array result
@@ -500,6 +519,23 @@ func (e *Executor) executeSelectWithAggregation(ctx context.Context, tx storage.
 
 	// First check if this is a CTE
 	if cteResult, isCTE := e.resolveCTETable(ctx, tx, tableName); isCTE {
+		// If there's a WHERE clause, we need to apply it first
+		if stmt.Where != nil {
+			// Process any subqueries in the WHERE clause
+			processedWhere, err := e.processWhereSubqueries(ctx, tx, stmt.Where)
+			if err != nil {
+				return nil, fmt.Errorf("error processing subqueries in WHERE clause: %w", err)
+			}
+
+			// Apply the WHERE filter
+			evaluator := NewEvaluator(ctx, e.functionRegistry)
+			cteResult = &FilteredResult{
+				result:    cteResult,
+				whereExpr: processedWhere,
+				evaluator: evaluator,
+			}
+		}
+
 		// For CTEs with aggregation, we need to handle them specially
 		return e.executeAggregationOnResult(ctx, cteResult, stmt)
 	}

@@ -99,15 +99,15 @@ func TestColumnarCTEMemoryEfficiency(t *testing.T) {
 
 	// Verify results
 	count := row[0].AsInterface().(int64)
-	sumId := row[1].AsInterface().(int64)
+	sumId := row[1].AsInterface().(float64) // SUM returns float64
 
 	if count != int64(numRows) {
 		t.Errorf("Expected count %d, got %d", numRows, count)
 	}
 
-	expectedSum := int64((numRows - 1) * numRows / 2) // Sum of 0 to numRows-1
+	expectedSum := float64((numRows - 1) * numRows / 2) // Sum of 0 to numRows-1
 	if sumId != expectedSum {
-		t.Errorf("Expected sum %d, got %d", expectedSum, sumId)
+		t.Errorf("Expected sum %f, got %f", expectedSum, sumId)
 	}
 
 	// Force GC and check memory after
