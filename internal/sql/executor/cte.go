@@ -41,6 +41,12 @@ func NewCTERegistry() *CTERegistry {
 // Execute executes all CTEs in a WITH clause
 func (r *CTERegistry) Execute(ctx context.Context, e *Executor, tx storage.Transaction, withClause *parser.WithClause) error {
 	for _, cte := range withClause.CTEs {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		// Execute the CTE query
 		result, err := e.executeCTEQuery(ctx, tx, cte.Query, r)
 		if err != nil {
@@ -50,9 +56,16 @@ func (r *CTERegistry) Execute(ctx context.Context, e *Executor, tx storage.Trans
 		// Materialize the result using columnar storage for efficiency
 		columnarResult, err := NewColumnarResult(result)
 		if err != nil {
+			// Clean up the result before returning error
+			if closeErr := result.Close(); closeErr != nil {
+				return fmt.Errorf("failed to materialize CTE '%s': %w (also failed to close result: %v)", cte.Name.Value, err, closeErr)
+			}
 			return fmt.Errorf("failed to materialize CTE '%s': %w", cte.Name.Value, err)
 		}
-		result.Close()
+		// Close the original result after successful materialization
+		if err := result.Close(); err != nil {
+			return fmt.Errorf("failed to close CTE result for '%s': %w", cte.Name.Value, err)
+		}
 
 		// Use columnar result as the materialized result
 		var materializedResult storage.Result = columnarResult
@@ -102,6 +115,20 @@ func (r *CTERegistry) GetCTE(name string) (storage.Result, bool) {
 	}
 
 	return result, exists
+}
+
+// Close cleans up all materialized CTE results
+func (r *CTERegistry) Close() error {
+	var firstErr error
+	for name, result := range r.materialized {
+		if err := result.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("failed to close CTE '%s': %w", name, err)
+		}
+	}
+	// Clear the maps to help GC
+	clear(r.materialized)
+	clear(r.schemas)
+	return firstErr
 }
 
 // executeCTEQuery executes a single CTE query

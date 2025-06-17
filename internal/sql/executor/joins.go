@@ -52,7 +52,9 @@ func (e *Executor) ExecuteJoinWithRegistry(ctx context.Context, joinSource *pars
 	}
 	rightResult, _, err := e.executeTableSourceWithRegistry(ctx, rightSource, evaluator, params)
 	if err != nil {
-		leftResult.Close()
+		if closeErr := leftResult.Close(); closeErr != nil {
+			return nil, fmt.Errorf("error executing right side of JOIN: %w (also failed to close left result: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("error executing right side of JOIN: %w", err)
 	}
 
@@ -67,8 +69,16 @@ func (e *Executor) ExecuteJoinWithRegistry(ctx context.Context, joinSource *pars
 	case "INNER", "LEFT", "RIGHT", "FULL", "CROSS":
 		// Valid join types
 	default:
-		leftResult.Close()
-		rightResult.Close()
+		var closeErrs []error
+		if err := leftResult.Close(); err != nil {
+			closeErrs = append(closeErrs, fmt.Errorf("close left: %w", err))
+		}
+		if err := rightResult.Close(); err != nil {
+			closeErrs = append(closeErrs, fmt.Errorf("close right: %w", err))
+		}
+		if len(closeErrs) > 0 {
+			return nil, fmt.Errorf("unsupported join type: %s (close errors: %v)", joinType, closeErrs)
+		}
 		return nil, fmt.Errorf("unsupported join type: %s", joinType)
 	}
 
@@ -79,8 +89,16 @@ func (e *Executor) ExecuteJoinWithRegistry(ctx context.Context, joinSource *pars
 
 		// Ensure there is a join condition for non-CROSS joins
 		if joinCond == nil {
-			leftResult.Close()
-			rightResult.Close()
+			var closeErrs []error
+			if err := leftResult.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close left: %w", err))
+			}
+			if err := rightResult.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close right: %w", err))
+			}
+			if len(closeErrs) > 0 {
+				return nil, fmt.Errorf("%s JOIN requires a join condition (close errors: %v)", joinType, closeErrs)
+			}
 			return nil, fmt.Errorf("%s JOIN requires a join condition", joinType)
 		}
 	}
@@ -99,8 +117,16 @@ func (e *Executor) ExecuteJoinWithRegistry(ctx context.Context, joinSource *pars
 	case "CROSS":
 		parserJoinType = parser.CrossJoin
 	default:
-		leftResult.Close()
-		rightResult.Close()
+		var closeErrs []error
+		if err := leftResult.Close(); err != nil {
+			closeErrs = append(closeErrs, fmt.Errorf("close left: %w", err))
+		}
+		if err := rightResult.Close(); err != nil {
+			closeErrs = append(closeErrs, fmt.Errorf("close right: %w", err))
+		}
+		if len(closeErrs) > 0 {
+			return nil, fmt.Errorf("unsupported join type: %s (close errors: %v)", joinType, closeErrs)
+		}
 		return nil, fmt.Errorf("unsupported join type: %s", joinType)
 	}
 
@@ -139,7 +165,10 @@ func (e *Executor) executeTableSourceWithRegistry(ctx context.Context, tableSour
 		if err != nil {
 			return nil, "", fmt.Errorf("error beginning transaction: %w", err)
 		}
-		defer tx.Rollback() // Rollback if not committed
+		defer func() {
+			// Rollback if not committed, but ignore error if already committed
+			_ = tx.Rollback()
+		}()
 
 		table, err := tx.GetTable(tableName)
 		if err != nil {
@@ -229,7 +258,9 @@ func (e *Executor) ExecuteJoinQueryWithRegistry(ctx context.Context, stmt *parse
 	if len(stmt.Columns) > 0 && !isAllColumns(stmt.Columns) {
 		joinResult, err = applyColumnProjection(joinResult, stmt.Columns)
 		if err != nil {
-			joinResult.Close()
+			if closeErr := joinResult.Close(); closeErr != nil {
+				return nil, fmt.Errorf("projection error: %w (also failed to close result: %v)", err, closeErr)
+			}
 			return nil, err
 		}
 	}

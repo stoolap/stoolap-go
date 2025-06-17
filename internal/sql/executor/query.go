@@ -18,6 +18,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -228,6 +229,11 @@ func (e *Executor) executeSelectWithContext(ctx context.Context, tx storage.Tran
 		e.cteRegistry = registry
 		defer func() {
 			e.cteRegistry = oldRegistry
+			// Clean up the CTE registry when done
+			if err := registry.Close(); err != nil {
+				// Log the error but don't propagate it
+				fmt.Fprintf(os.Stderr, "Warning: failed to close CTE registry: %v\n", err)
+			}
 		}()
 	}
 	// Note: If stmt.With is nil, we keep the current CTE registry from the parent query

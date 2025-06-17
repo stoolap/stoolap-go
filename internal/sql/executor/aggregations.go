@@ -18,6 +18,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -46,7 +47,12 @@ func (e *Executor) executeSelectWithJoinsAndAggregation(ctx context.Context, tx 
 	if err != nil {
 		return nil, fmt.Errorf("error executing join: %w", err)
 	}
-	defer joinResult.Close()
+	defer func() {
+		if err := joinResult.Close(); err != nil {
+			// Log the error but don't override the main error
+			fmt.Fprintf(os.Stderr, "Warning: failed to close join result: %v\n", err)
+		}
+	}()
 
 	// Now perform aggregation on the joined result
 	return e.executeAggregationOnResult(ctx, joinResult, stmt)
@@ -96,7 +102,9 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 		}
 
 		// Close the original result
-		result.Close()
+		if err := result.Close(); err != nil {
+			return nil, fmt.Errorf("failed to close result during aggregation: %w", err)
+		}
 	}
 
 	// Identify aggregate and grouping columns
@@ -1285,7 +1293,9 @@ func (e *Executor) executeGlobalAggregation(ctx context.Context, tx storage.Tran
 		}
 
 		// Re-fetch with all needed columns
-		baseResult.Close()
+		if err := baseResult.Close(); err != nil {
+			return nil, fmt.Errorf("failed to close base result before re-fetch: %w", err)
+		}
 		baseResult, err = tx.Select(tableName, neededColumns, nil)
 		if err != nil {
 			return nil, err
@@ -1459,7 +1469,10 @@ func (e *Executor) executeGlobalAggregation(ctx context.Context, tx storage.Tran
 	// Add the single result row
 	resultRows = append(resultRows, resultValues)
 
-	baseResult.Close() // Close the base result
+	// Close the base result and handle error
+	if err := baseResult.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close base result: %w", err)
+	}
 
 	// Create and return the result
 	return &ExecResult{

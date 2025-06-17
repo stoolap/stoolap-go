@@ -297,7 +297,6 @@ Stoolap includes numerous performance optimizations:
 
 - **Lock-Free MVCC**: Concurrent writers without serialization bottlenecks
 - **Columnar Storage**: Column-oriented storage for CTEs and analytical queries (99.90% memory reduction)
-- **Columnar Indexes**: Optimized for analytical queries and compression
 - **SIMD Operations**: Vectorized execution for arithmetic, comparisons, and functions
 - **Hash-Based IN Subqueries**: O(1) lookups for IN/NOT IN expressions (up to 2048x speedup)
 - **Array-Based Row Storage**: Eliminated map allocations throughout query execution
