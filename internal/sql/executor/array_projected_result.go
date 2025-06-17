@@ -41,7 +41,7 @@ type ArrayProjectedResult struct {
 }
 
 // NewArrayProjectedResult creates a new array-based projected result
-func NewArrayProjectedResult(baseResult storage.Result, columns []string, expressions []parser.Expression, registry contract.FunctionRegistry) *ArrayProjectedResult {
+func NewArrayProjectedResult(ctx context.Context, baseResult storage.Result, columns []string, expressions []parser.Expression, registry contract.FunctionRegistry) *ArrayProjectedResult {
 	baseColumns := baseResult.Columns()
 	colIndexMap := make(map[string]int)
 
@@ -61,7 +61,7 @@ func NewArrayProjectedResult(baseResult storage.Result, columns []string, expres
 		baseResult:  baseResult,
 		columns:     columns,
 		expressions: expressions,
-		evaluator:   NewEvaluator(context.Background(), registry),
+		evaluator:   NewEvaluator(ctx, registry),
 		baseColumns: baseColumns,
 		colIndexMap: colIndexMap,
 	}

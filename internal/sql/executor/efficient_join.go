@@ -379,14 +379,12 @@ func (h *HashJoinResult) nextNestedLoop() bool {
 				continue
 			}
 
-			if boolVal, ok := match.(storage.ColumnValue); ok {
-				boolInterface := boolVal.AsInterface()
-				if b, ok := boolInterface.(bool); ok && b {
-					// Match found, build joined row
-					h.buildJoinedRow(h.currentRow[:len(h.leftColumns)], rightRow)
-					h.leftRowMatched = true
-					return true
-				}
+			boolInterface := match.AsInterface()
+			if b, ok := boolInterface.(bool); ok && b {
+				// Match found, build joined row
+				h.buildJoinedRow(h.currentRow[:len(h.leftColumns)], rightRow)
+				h.leftRowMatched = true
+				return true
 			}
 		} else {
 			// No condition (CROSS JOIN), all rows match

@@ -256,7 +256,7 @@ func (e *Executor) ExecuteJoinQueryWithRegistry(ctx context.Context, stmt *parse
 
 	// Apply column projection based on SELECT clause
 	if len(stmt.Columns) > 0 && !isAllColumns(stmt.Columns) {
-		joinResult, err = applyColumnProjection(joinResult, stmt.Columns)
+		joinResult, err = applyColumnProjection(ctx, joinResult, stmt.Columns)
 		if err != nil {
 			if closeErr := joinResult.Close(); closeErr != nil {
 				return nil, fmt.Errorf("projection error: %w (also failed to close result: %v)", err, closeErr)
@@ -325,7 +325,7 @@ func isAllColumns(columns []parser.Expression) bool {
 }
 
 // applyColumnProjection applies a column projection to a result
-func applyColumnProjection(result storage.Result, columns []parser.Expression) (storage.Result, error) {
+func applyColumnProjection(ctx context.Context, result storage.Result, columns []parser.Expression) (storage.Result, error) {
 	// Build the list of projected column names
 	projectedColumns := make([]string, len(columns))
 
@@ -345,5 +345,5 @@ func applyColumnProjection(result storage.Result, columns []parser.Expression) (
 	}
 
 	// Use the optimized ArrayProjectedResult
-	return NewArrayProjectedResult(result, projectedColumns, columns, GetGlobalFunctionRegistry()), nil
+	return NewArrayProjectedResult(ctx, result, projectedColumns, columns, GetGlobalFunctionRegistry()), nil
 }

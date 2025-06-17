@@ -116,15 +116,13 @@ func (f *FilteredResult) Next() bool {
 			continue
 		}
 
-		if boolVal, ok := match.(storage.ColumnValue); ok {
-			// Check if it's a boolean true value
-			boolInterface := boolVal.AsInterface()
-			if b, ok := boolInterface.(bool); ok && b {
-				f.currentRow = row
-				f.currentValid = true
-				f.rowsMatched++
-				return true
-			}
+		// Check if it's a boolean true value
+		boolInterface := match.AsInterface()
+		if b, ok := boolInterface.(bool); ok && b {
+			f.currentRow = row
+			f.currentValid = true
+			f.rowsMatched++
+			return true
 		}
 	}
 

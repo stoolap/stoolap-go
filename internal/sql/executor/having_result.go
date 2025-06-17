@@ -79,10 +79,8 @@ func (h *HavingFilteredResult) Next() bool {
 
 		// Check if result is true
 		var match bool
-		if boolVal, ok := result.(storage.ColumnValue); ok {
-			if b, ok := boolVal.AsInterface().(bool); ok {
-				match = b
-			}
+		if b, ok := result.AsInterface().(bool); ok {
+			match = b
 		}
 
 		if match {

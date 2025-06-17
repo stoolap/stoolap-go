@@ -805,7 +805,7 @@ func (e *Executor) executeSelectWithContext(ctx context.Context, tx storage.Tran
 
 	// If we have literal columns or added extra columns for WHERE, wrap the result to project
 	if len(literalColumns) > 0 || extraColumnsAdded {
-		result = NewArrayProjectedResult(result, columns, stmt.Columns, e.functionRegistry)
+		result = NewArrayProjectedResult(ctx, result, columns, stmt.Columns, e.functionRegistry)
 	}
 
 	// Apply DISTINCT if specified - must be after filtering but before ordering

@@ -40,7 +40,6 @@ type Evaluator struct {
 	row map[string]storage.ColumnValue
 	// Array-based row data (for optimization)
 	rowArray    storage.Row
-	rowColumns  []string
 	rowColIndex map[string]int
 	useArrayRow bool
 	// Mapping from table alias to actual table name
@@ -72,7 +71,6 @@ func NewEvaluator(ctx context.Context, registry contract.FunctionRegistry) *Eval
 // SetRowArray sets the row data using arrays for better performance
 func (e *Evaluator) SetRowArray(row storage.Row, columns []string, colIndex map[string]int) {
 	e.rowArray = row
-	e.rowColumns = columns
 	e.rowColIndex = colIndex
 	e.useArrayRow = true
 }

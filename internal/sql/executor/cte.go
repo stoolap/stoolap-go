@@ -230,7 +230,7 @@ func (e *Executor) processCTESelect(ctx context.Context, tx storage.Transaction,
 		}
 
 		// Use ArrayProjectedResult for better performance
-		cteResult = NewArrayProjectedResult(cteResult, columnNames, stmt.Columns, e.functionRegistry)
+		cteResult = NewArrayProjectedResult(ctx, cteResult, columnNames, stmt.Columns, e.functionRegistry)
 	}
 
 	// Apply ORDER BY, LIMIT, OFFSET if needed

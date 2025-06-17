@@ -172,10 +172,9 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 			if IsAggregateFunction(funcName) {
 				// Create an aggregate function descriptor
 				var columnName string
-				var isDistinct bool
 
 				// Check if the function call has the DISTINCT flag set
-				isDistinct = expr.IsDistinct
+				isDistinct := expr.IsDistinct
 
 				if len(expr.Arguments) == 1 {
 					// Extract column name from the argument
@@ -216,10 +215,9 @@ func (e *Executor) executeAggregationOnResult(ctx context.Context, result storag
 				if IsAggregateFunction(funcName) {
 					// Create an aggregate function descriptor
 					var columnName string
-					var isDistinct bool
 
 					// Check if the function call has the DISTINCT flag set
-					isDistinct = funcCall.IsDistinct
+					isDistinct := funcCall.IsDistinct
 
 					// Extract column name from arguments
 					if len(funcCall.Arguments) == 1 {
