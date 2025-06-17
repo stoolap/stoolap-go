@@ -316,8 +316,9 @@ func executeQueryWithOptions(db *sql.DB, query string, jsonOutput, quiet bool, r
 		query = baseQuery
 	}
 
-	// Check if it's a query that returns rows (SELECT, SHOW, PRAGMA reads, etc.)
+	// Check if it's a query that returns rows (SELECT, SHOW, PRAGMA reads, WITH/CTE, etc.)
 	if strings.HasPrefix(upperQuery, "SELECT") ||
+		strings.HasPrefix(upperQuery, "WITH") ||
 		strings.HasPrefix(upperQuery, "SHOW") ||
 		(strings.HasPrefix(upperQuery, "PRAGMA") && !strings.Contains(upperQuery, "=")) {
 		var rows *sql.Rows
