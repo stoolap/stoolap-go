@@ -38,6 +38,10 @@ type Evaluator struct {
 	functionRegistry contract.FunctionRegistry
 	// Row data for column references, storing ColumnValue directly
 	row map[string]storage.ColumnValue
+	// Array-based row data (for optimization)
+	rowArray    storage.Row
+	rowColIndex map[string]int
+	useArrayRow bool
 	// Mapping from table alias to actual table name
 	tableAliases map[string]string
 	// Mapping from column alias to original column name
@@ -60,7 +64,15 @@ func NewEvaluator(ctx context.Context, registry contract.FunctionRegistry) *Eval
 		tableAliases:     make(map[string]string),
 		columnAliases:    make(map[string]string),
 		ps:               ps,
+		useArrayRow:      false,
 	}
+}
+
+// SetRowArray sets the row data using arrays for better performance
+func (e *Evaluator) SetRowArray(row storage.Row, columns []string, colIndex map[string]int) {
+	e.rowArray = row
+	e.rowColIndex = colIndex
+	e.useArrayRow = true
 }
 
 // WithRow sets the current row data for column references
@@ -96,6 +108,24 @@ func (e *Evaluator) WithColumnAliases(aliases map[string]string) *Evaluator {
 func (e *Evaluator) WithTableAliases(aliases map[string]string) *Evaluator {
 	e.tableAliases = aliases
 	return e
+}
+
+// EvaluateWithRow evaluates an expression with a simple row context
+func (e *Evaluator) EvaluateWithRow(expr parser.Expression, row map[string]interface{}) (storage.ColumnValue, error) {
+	// Convert row to storage.ColumnValue format
+	columnValueRow := common.GetColumnValueMap(len(row))
+	defer common.PutColumnValueMap(columnValueRow, len(row))
+
+	for col, val := range row {
+		columnValueRow[col] = storage.GetPooledColumnValue(val)
+	}
+
+	// Set the row and evaluate
+	oldRow := e.row
+	e.row = columnValueRow
+	defer func() { e.row = oldRow }()
+
+	return e.Evaluate(expr)
 }
 
 // Evaluate evaluates an expression and returns its storage.ColumnValue
@@ -347,7 +377,18 @@ func (e *Evaluator) Evaluate(expr parser.Expression) (storage.ColumnValue, error
 			return storage.StaticNullUnknown, errors.New("cannot evaluate * in expressions")
 		}
 
-		if val, exists := e.row[columnName]; exists {
+		// Use array-based lookup if available
+		if e.useArrayRow {
+			if idx, ok := e.rowColIndex[columnName]; ok && idx < len(e.rowArray) {
+				return e.rowArray[idx], nil
+			}
+			// Try case-insensitive match
+			for col, idx := range e.rowColIndex {
+				if strings.EqualFold(col, columnName) && idx < len(e.rowArray) {
+					return e.rowArray[idx], nil
+				}
+			}
+		} else if val, exists := e.row[columnName]; exists {
 			// Return the ColumnValue directly - no conversion needed
 			return val, nil
 		}
@@ -424,15 +465,52 @@ func (e *Evaluator) Evaluate(expr parser.Expression) (storage.ColumnValue, error
 			columnName = originalCol
 		}
 
-		// Look for qualified column in the row (e.g., "table.column")
-		qualifiedName := tableName + "." + columnName
-		if val, exists := e.row[qualifiedName]; exists {
-			return val, nil
-		}
+		// Use array-based lookup if available
+		if e.useArrayRow {
+			// Look for qualified column (e.g., "table.column")
+			qualifiedName := tableName + "." + columnName
+			if idx, ok := e.rowColIndex[qualifiedName]; ok && idx < len(e.rowArray) {
+				return e.rowArray[idx], nil
+			}
 
-		// As a fallback, try just the column name
-		if val, exists := e.row[columnName]; exists {
-			return val, nil
+			// Try just the column name
+			if idx, ok := e.rowColIndex[columnName]; ok && idx < len(e.rowArray) {
+				return e.rowArray[idx], nil
+			}
+
+			// Try case-insensitive match on qualified name
+			for col, idx := range e.rowColIndex {
+				if strings.EqualFold(col, qualifiedName) && idx < len(e.rowArray) {
+					return e.rowArray[idx], nil
+				}
+				// Also try matching just the column part
+				if idx2 := lastIndex(col, '.'); idx2 >= 0 {
+					colPart := col[idx2+1:]
+					if strings.EqualFold(colPart, columnName) && idx < len(e.rowArray) {
+						return e.rowArray[idx], nil
+					}
+				}
+			}
+		} else {
+			// Look for qualified column in the row (e.g., "table.column")
+			qualifiedName := tableName + "." + columnName
+			if val, exists := e.row[qualifiedName]; exists {
+				return val, nil
+			}
+
+			// As a fallback, try just the column name
+			if val, exists := e.row[columnName]; exists {
+				return val, nil
+			}
+
+			// Additional fallback for CTE aliases - try without any table prefix
+			// This handles cases where CTEs are accessed with table aliases
+			for colName, colVal := range e.row {
+				// Check if this column matches what we're looking for
+				if colName == columnName {
+					return colVal, nil
+				}
+			}
 		}
 
 		return storage.StaticNullUnknown, fmt.Errorf("column '%s.%s' not found in row", tableName, columnName)
@@ -841,6 +919,41 @@ func (e *Evaluator) Evaluate(expr parser.Expression) (storage.ColumnValue, error
 		}
 
 	case *parser.FunctionCall:
+		// Special handling for aggregate functions in HAVING clause
+		// When we have an aggregate function like COUNT(*), it should be treated as a column reference
+		if IsAggregateFunction(expr.Function) {
+			// Build the column name for the aggregate function
+			columnName := expr.Function + "("
+			for i, arg := range expr.Arguments {
+				if i > 0 {
+					columnName += ", "
+				}
+				columnName += arg.String()
+			}
+			columnName += ")"
+
+			// Try to find this column in the row
+			if e.useArrayRow {
+				if idx, ok := e.rowColIndex[columnName]; ok && idx < len(e.rowArray) {
+					return e.rowArray[idx], nil
+				}
+			} else if val, exists := e.row[columnName]; exists {
+				return val, nil
+			}
+
+			// Try case-insensitive match
+			if !e.useArrayRow {
+				for col, val := range e.row {
+					if strings.EqualFold(col, columnName) {
+						return val, nil
+					}
+				}
+			}
+
+			// If not found, return error
+			return storage.StaticNullUnknown, fmt.Errorf("aggregate column '%s' not found in HAVING clause", columnName)
+		}
+
 		// Evaluate function arguments
 		args := make([]storage.ColumnValue, len(expr.Arguments))
 		for i, arg := range expr.Arguments {
@@ -875,10 +988,7 @@ func (e *Evaluator) Evaluate(expr parser.Expression) (storage.ColumnValue, error
 		// Get a scalar function from the registry by name
 		fn := e.functionRegistry.GetScalarFunction(expr.Function)
 		if fn == nil {
-			// Check for aggregate function used directly (without GROUP BY)
-			if IsAggregateFunction(expr.Function) {
-				return storage.StaticNullUnknown, fmt.Errorf("aggregate function %s used without GROUP BY", expr.Function)
-			}
+			// We already handled aggregate functions above
 			return storage.StaticNullUnknown, fmt.Errorf("function not found: %s", expr.Function)
 		}
 
@@ -989,6 +1099,7 @@ func (e *Evaluator) Evaluate(expr parser.Expression) (storage.ColumnValue, error
 		switch rightExpr := expr.Right.(type) {
 		case *parser.ExpressionList:
 			// IN list of values
+			hasNull := false
 			for _, elemExpr := range rightExpr.Expressions {
 				elemVal, err := e.Evaluate(elemExpr)
 				defer storage.PutPooledColumnValue(elemVal)
@@ -996,8 +1107,9 @@ func (e *Evaluator) Evaluate(expr parser.Expression) (storage.ColumnValue, error
 					continue // Skip errors in list elements
 				}
 
-				// For NULL in the list, we ignore it
+				// Check for NULL in the list
 				if elemVal.IsNull() {
+					hasNull = true
 					continue
 				}
 
@@ -1011,6 +1123,12 @@ func (e *Evaluator) Evaluate(expr parser.Expression) (storage.ColumnValue, error
 						return storage.NewBooleanValue(true), nil
 					}
 				}
+			}
+
+			// For NOT IN with NULL in the list, return NULL
+			// SQL standard: NOT IN returns NULL if any value in the list is NULL
+			if expr.Not && hasNull {
+				return storage.StaticNullUnknown, nil
 			}
 
 			// No match found
@@ -1027,6 +1145,10 @@ func (e *Evaluator) Evaluate(expr parser.Expression) (storage.ColumnValue, error
 		default:
 			return storage.StaticNullUnknown, fmt.Errorf("unsupported right operand for IN: %T", expr.Right)
 		}
+
+	case *parser.InExpressionHash:
+		// Optimized hash-based IN expression
+		return e.EvaluateInExpressionHash(expr)
 
 	case *parser.BetweenExpression:
 		// Evaluate the expression and bounds
@@ -1084,6 +1206,12 @@ func (e *Evaluator) Evaluate(expr parser.Expression) (storage.ColumnValue, error
 		// For evaluation purposes, we just evaluate the underlying expression
 		return e.Evaluate(expr.Expression)
 
+	case *parser.ScalarSubquery:
+		// Scalar subqueries need to be evaluated by the executor
+		// This is a placeholder - the actual evaluation should be done by processWhereSubqueries
+		// before the expression reaches the evaluator
+		return storage.StaticNullUnknown, fmt.Errorf("scalar subquery should have been processed before evaluation")
+
 	default:
 		return storage.StaticNullUnknown, fmt.Errorf("unsupported expression type: %T", expr)
 	}
@@ -1139,6 +1267,39 @@ func convertToType(val storage.ColumnValue, targetType storage.DataType) (interf
 	default:
 		return nil, false
 	}
+}
+
+// EvaluateInExpressionHash evaluates an optimized IN expression with hash set
+func (e *Evaluator) EvaluateInExpressionHash(expr *parser.InExpressionHash) (storage.ColumnValue, error) {
+	// Evaluate the left expression
+	leftVal, err := e.Evaluate(expr.Left)
+	defer storage.PutPooledColumnValue(leftVal)
+	if err != nil {
+		return storage.StaticNullUnknown, err
+	}
+
+	// For NULL, IN returns NULL (not false!)
+	if leftVal.IsNull() {
+		return storage.StaticNullUnknown, nil
+	}
+
+	// For NOT IN with NULL in the value set, result is always NULL
+	// SQL standard: NOT IN returns NULL if any value in the list is NULL
+	if expr.Not && expr.HasNull {
+		return storage.StaticNullUnknown, nil
+	}
+
+	// Get the interface value for hash lookup
+	leftInterface := leftVal.AsInterface()
+
+	// Check if the value exists in the hash set - O(1) lookup!
+	_, exists := expr.ValueSet[leftInterface]
+
+	// Return the result based on NOT flag
+	if expr.Not {
+		return storage.NewBooleanValue(!exists), nil
+	}
+	return storage.NewBooleanValue(exists), nil
 }
 
 // EvaluateArithmeticExpression evaluates an arithmetic expression (binary operation)
