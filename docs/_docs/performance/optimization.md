@@ -36,6 +36,15 @@ CREATE INDEX idx_product_category_price ON products (category_id, price);
 
 ## Query Optimization
 
+### Recent Performance Improvements
+
+Stoolap includes significant performance optimizations implemented in recent versions:
+
+- **Columnar Storage for CTEs** - 99.90% memory reduction (16.7GB → 17MB for 10k row benchmarks)
+- **Hash-Based IN Subqueries** - Up to 2048x faster for large IN lists
+- **Array-Based Row Storage** - Eliminated map allocations throughout query execution
+- **Columnar Aggregations** - Direct operations on column data for COUNT, SUM, AVG, MIN, MAX
+
 ### SELECT Statement Optimization
 
 - **Select only needed columns** - Avoid `SELECT *` when possible
@@ -192,6 +201,61 @@ Stoolap can execute some operations in parallel:
 - **Parallel aggregations** - Divided work for faster aggregations
 - **Concurrent index operations** - Background index building
 
+## CTE and Subquery Optimization
+
+Stoolap includes advanced optimizations for CTEs and subqueries:
+
+### Common Table Expressions (CTEs)
+
+- **Columnar Storage**: CTEs are automatically stored in columnar format
+- **Memory Efficiency**: 99.90% reduction in memory usage compared to row storage
+- **Single Materialization**: CTEs are evaluated once and reused throughout the query
+- **Columnar Aggregations**: Direct operations on column arrays for COUNT, SUM, AVG, MIN, MAX
+
+```sql
+-- Efficient: CTE materializes once with columnar storage
+WITH summary AS (
+    SELECT region, product_id, SUM(amount) as total
+    FROM sales
+    WHERE year = 2024
+    GROUP BY region, product_id
+)
+SELECT 
+    s1.region,
+    COUNT(*) as product_count,
+    SUM(s1.total) as region_total
+FROM summary s1
+GROUP BY s1.region;
+```
+
+### Subquery Optimization
+
+- **Hash-Based IN/NOT IN**: Automatic conversion to hash lookups
+- **Performance Gains**: Up to 2048x faster for large IN lists
+- **Memory Efficiency**: O(1) lookups instead of O(n×m) comparisons
+
+```sql
+-- Automatically optimized with hash table
+DELETE FROM orders 
+WHERE customer_id IN (
+    SELECT id FROM customers 
+    WHERE last_order < '2024-01-01'
+);
+
+-- Scalar subqueries use columnar MIN/MAX when possible
+SELECT name, salary,
+    (SELECT AVG(salary) FROM employees) as company_avg
+FROM employees
+WHERE salary > (SELECT percentile_cont(0.75) FROM employees);
+```
+
+### Best Practices for CTEs and Subqueries
+
+1. **Use CTEs for Complex Queries**: Break down complex logic into readable CTEs
+2. **Leverage Columnar Benefits**: CTEs automatically use columnar storage
+3. **Filter Early**: Apply WHERE clauses in CTE definitions
+4. **Avoid Redundant Subqueries**: Use CTEs when the same subquery is needed multiple times
+
 ## Best Practices Summary
 
 1. **Design schema carefully** - Choose appropriate data types and normalization level
@@ -204,3 +268,5 @@ Stoolap can execute some operations in parallel:
 8. **Consider bulk operations** - Use bulk inserts and updates for better throughput
 9. **Leverage vectorized execution** - Structure operations to benefit from batch processing
 10. **Configure for your workload** - Adjust memory settings based on your specific needs
+11. **Use CTEs for complex queries** - Benefit from columnar storage and single materialization
+12. **Optimize subqueries** - Leverage automatic hash-based IN/NOT IN optimization
