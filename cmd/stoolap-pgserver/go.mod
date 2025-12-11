@@ -5,7 +5,7 @@ go 1.23.0
 require (
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/spf13/cobra v1.9.1
-	github.com/stoolap/stoolap-go v0.1.2
+	github.com/stoolap/stoolap-go v0.1.3
 )
 
 require (
