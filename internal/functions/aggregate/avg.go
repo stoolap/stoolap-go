@@ -16,9 +16,9 @@ limitations under the License.
 package aggregate
 
 import (
-	"github.com/stoolap/stoolap/internal/functions/contract"
-	"github.com/stoolap/stoolap/internal/functions/registry"
-	"github.com/stoolap/stoolap/internal/parser/funcregistry"
+	"github.com/stoolap/stoolap-go/internal/functions/contract"
+	"github.com/stoolap/stoolap-go/internal/functions/registry"
+	"github.com/stoolap/stoolap-go/internal/parser/funcregistry"
 )
 
 // AvgFunction implements the AVG aggregate function

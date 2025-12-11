@@ -23,9 +23,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/fastmap"
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/expression"
+	"github.com/stoolap/stoolap-go/internal/fastmap"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/expression"
 )
 
 // Ordering function type for comparing values

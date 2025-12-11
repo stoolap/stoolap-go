@@ -22,8 +22,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stoolap/stoolap/internal/parser"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/parser"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // A shared object pool for streaming join row maps to reduce memory allocations

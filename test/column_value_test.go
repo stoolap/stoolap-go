@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // This test validates the basic column value functionality

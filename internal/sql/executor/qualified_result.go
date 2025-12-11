@@ -18,7 +18,7 @@ package executor
 import (
 	"context"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // QualifiedResult wraps a result to add table qualification to column names

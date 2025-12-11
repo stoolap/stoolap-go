@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/common"
-	_ "github.com/stoolap/stoolap/pkg/driver" // Register stoolap driver
+	"github.com/stoolap/stoolap-go/internal/common"
+	_ "github.com/stoolap/stoolap-go/pkg/driver" // Register stoolap driver
 )
 
 // TestIndexDirectCreate directly tests index name preservation

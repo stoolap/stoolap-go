@@ -20,7 +20,7 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestMVCCDeletionByPrimaryKey specifically tests the bug where deleted rows

@@ -19,8 +19,8 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/internal/functions/scalar" // Import for init registration
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/internal/functions/scalar" // Import for init registration
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 func TestFunctionPushdown(t *testing.T) {

@@ -23,7 +23,7 @@ import (
 	"time"
 
 	// Import for side effects - driver registration
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // Testing update with columnar index on non-primary key column

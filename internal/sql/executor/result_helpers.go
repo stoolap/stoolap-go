@@ -23,10 +23,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/stoolap/stoolap/internal/functions/contract"
-	"github.com/stoolap/stoolap/internal/functions/registry"
-	"github.com/stoolap/stoolap/internal/parser"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/functions/contract"
+	"github.com/stoolap/stoolap-go/internal/functions/registry"
+	"github.com/stoolap/stoolap-go/internal/parser"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // SqlFunction represents a SQL function in a query

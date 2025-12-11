@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // InListExpression represents an expression that checks if a column value is in a list of values

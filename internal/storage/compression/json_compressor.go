@@ -18,7 +18,7 @@ package compression
 import (
 	"encoding/json"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // JSONCompressor is a specialized compressor for JSON data

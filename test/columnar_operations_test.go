@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap-go"
 )
 
 func TestColumnarOperations(t *testing.T) {

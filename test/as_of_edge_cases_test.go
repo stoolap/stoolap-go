@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/storage/mvcc"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 // TestAsOfClosedVersionStore tests behavior when version store is closed

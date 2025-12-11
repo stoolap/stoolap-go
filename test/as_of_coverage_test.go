@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap-go"
 )
 
 // TestAsOfParserErrors tests parser error paths

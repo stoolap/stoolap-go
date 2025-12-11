@@ -23,7 +23,7 @@ import (
 	"time"
 
 	// Import for side effects - driver registration
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // BenchmarkMVCCInsert provides a simple benchmark for MVCC insert operations

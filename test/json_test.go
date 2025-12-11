@@ -18,7 +18,7 @@ package test
 import (
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 func TestJSONParsing(t *testing.T) {

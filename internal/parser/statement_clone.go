@@ -16,7 +16,7 @@ limitations under the License.
 package parser
 
 import (
-	"github.com/stoolap/stoolap/internal/parser/funcregistry"
+	"github.com/stoolap/stoolap-go/internal/parser/funcregistry"
 )
 
 // Cloner is an interface that allows a Node to be cloned

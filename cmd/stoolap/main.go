@@ -27,10 +27,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/stoolap/stoolap/internal/common"
+	"github.com/stoolap/stoolap-go/internal/common"
 
 	// Import driver
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 var (

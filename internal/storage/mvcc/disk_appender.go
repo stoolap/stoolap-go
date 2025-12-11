@@ -23,8 +23,8 @@ import (
 	"os"
 	"sort"
 
-	"github.com/stoolap/stoolap/internal/common"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/common"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // DiskAppender handles writing row versions to disk

@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/stoolap/stoolap/internal/functions/contract"
-	"github.com/stoolap/stoolap/internal/functions/registry"
-	"github.com/stoolap/stoolap/internal/parser/funcregistry"
+	"github.com/stoolap/stoolap-go/internal/functions/contract"
+	"github.com/stoolap/stoolap-go/internal/functions/registry"
+	"github.com/stoolap/stoolap-go/internal/parser/funcregistry"
 )
 
 // FloorFunction implements the FLOOR function

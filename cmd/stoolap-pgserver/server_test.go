@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgproto3"
-	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap-go"
 )
 
 func TestServerStartup(t *testing.T) {

@@ -27,7 +27,7 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/stoolap/stoolap/internal/common"
+	"github.com/stoolap/stoolap-go/internal/common"
 )
 
 // CLI represents an interactive command-line interface for working with the database

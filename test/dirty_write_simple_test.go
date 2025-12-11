@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 func TestDirtyWriteSimple(t *testing.T) {

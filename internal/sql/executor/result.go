@@ -20,7 +20,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // ExecResult represents an execution result for DML operations

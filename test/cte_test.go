@@ -20,7 +20,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap-go"
 )
 
 func TestBasicCTE(t *testing.T) {

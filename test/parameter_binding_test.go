@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/parser"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/parser"
 )
 
 // Helper function to convert interface slice to driver.NamedValue slice

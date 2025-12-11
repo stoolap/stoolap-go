@@ -58,7 +58,7 @@ When creating new files, please include this header. For existing files, we'll g
    ```
 3. Add the upstream repository as a remote:
    ```bash
-   git remote add upstream https://github.com/stoolap/stoolap.git
+   git remote add upstream https://github.com/stoolap/stoolap-go.git
    ```
 4. Create a new branch for your feature or bugfix:
    ```bash

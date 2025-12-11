@@ -20,7 +20,7 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver" // Import the stoolap SQL driver
+	_ "github.com/stoolap/stoolap-go/pkg/driver" // Import the stoolap SQL driver
 )
 
 func TestExpressionPushdown(t *testing.T) {

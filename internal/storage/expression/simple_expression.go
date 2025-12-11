@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // SimpleExpression is a basic implementation of a boolean expression

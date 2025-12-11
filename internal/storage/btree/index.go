@@ -25,7 +25,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // Index represents a B-tree index for one or more columns

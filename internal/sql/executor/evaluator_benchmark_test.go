@@ -19,9 +19,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/functions/registry"
-	"github.com/stoolap/stoolap/internal/parser"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/functions/registry"
+	"github.com/stoolap/stoolap-go/internal/parser"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // BenchmarkValueCompare tests the performance of value comparison

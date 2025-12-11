@@ -19,10 +19,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 
 	// Import the mvcc storage engine
-	_ "github.com/stoolap/stoolap/internal/storage/mvcc"
+	_ "github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 // TestExecutorShowCommands tests SHOW commands

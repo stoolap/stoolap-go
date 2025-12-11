@@ -23,7 +23,7 @@ import (
 	"time"
 
 	// Import for side effects - driver registration
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // BenchmarkCountStarPerformance tests the performance of COUNT(*) queries

@@ -23,12 +23,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/stoolap/stoolap/internal/common"
-	"github.com/stoolap/stoolap/internal/functions/contract"
-	"github.com/stoolap/stoolap/internal/functions/registry"
-	"github.com/stoolap/stoolap/internal/parser"
-	"github.com/stoolap/stoolap/internal/sql/executor/vectorized"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/common"
+	"github.com/stoolap/stoolap-go/internal/functions/contract"
+	"github.com/stoolap/stoolap-go/internal/functions/registry"
+	"github.com/stoolap/stoolap-go/internal/parser"
+	"github.com/stoolap/stoolap-go/internal/sql/executor/vectorized"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // Executor executes SQL statements

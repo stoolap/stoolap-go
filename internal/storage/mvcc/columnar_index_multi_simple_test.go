@@ -18,7 +18,7 @@ package mvcc
 import (
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 func TestEnhancedMultiColumnarIndex_Basic(t *testing.T) {

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver" // Import for database registration
+	_ "github.com/stoolap/stoolap-go/pkg/driver" // Import for database registration
 )
 
 func TestSQLLiteralsSupported(t *testing.T) {

@@ -18,7 +18,7 @@ package test
 import (
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/functions/scalar"
+	"github.com/stoolap/stoolap-go/internal/functions/scalar"
 )
 
 func TestCastDirect(t *testing.T) {

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestUncommittedWritesTracking tests the issue where committed rows still appear

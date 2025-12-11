@@ -18,7 +18,7 @@ package mvcc
 import (
 	"context"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // AliasedResult wraps a storage.Result and manages column aliases

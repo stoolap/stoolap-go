@@ -19,7 +19,7 @@ import (
 	"database/sql"
 	"sync"
 
-	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap-go"
 )
 
 // connectionState tracks the state of a PostgreSQL connection

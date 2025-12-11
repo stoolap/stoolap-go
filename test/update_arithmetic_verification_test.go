@@ -19,7 +19,7 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver" // Import the Stoolap driver
+	_ "github.com/stoolap/stoolap-go/pkg/driver" // Import the Stoolap driver
 )
 
 func TestUpdateArithmeticVerification(t *testing.T) {

@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap-go"
 )
 
 // TestAsOfTransaction tests AS OF TRANSACTION queries

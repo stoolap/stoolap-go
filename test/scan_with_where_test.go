@@ -20,9 +20,9 @@ import (
 	"database/sql"
 	"testing"
 
-	internalsql "github.com/stoolap/stoolap/internal/sql"
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/mvcc"
+	internalsql "github.com/stoolap/stoolap-go/internal/sql"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 // TestScanWithWhereClause verifies that scanning works correctly

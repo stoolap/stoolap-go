@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestCountWithWhereClauseAndIndex tests that COUNT(*) with a WHERE clause works correctly with indexes

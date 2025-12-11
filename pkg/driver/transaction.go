@@ -20,7 +20,7 @@ import (
 	"database/sql/driver"
 	"errors"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // Tx represents a transaction

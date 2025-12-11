@@ -22,8 +22,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/common"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/common"
 )
 
 // TestOldSnapshotWithWAL tests the scenario where:

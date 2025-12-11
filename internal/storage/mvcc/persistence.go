@@ -27,8 +27,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/binser"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/binser"
 )
 
 // Default persistence configuration values

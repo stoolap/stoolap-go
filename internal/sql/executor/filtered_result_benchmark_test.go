@@ -19,8 +19,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/parser"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/parser"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // MockResult implements a simple storage.Result for testing

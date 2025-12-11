@@ -22,9 +22,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stoolap/stoolap/internal/fastmap"
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/expression"
+	"github.com/stoolap/stoolap-go/internal/fastmap"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/expression"
 )
 
 // Per-table auto-increment counters are now implemented in the VersionStore

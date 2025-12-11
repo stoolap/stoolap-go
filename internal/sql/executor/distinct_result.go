@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // DistinctResult is a wrapper result that applies DISTINCT to filter duplicates

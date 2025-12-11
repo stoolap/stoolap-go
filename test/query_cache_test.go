@@ -20,7 +20,7 @@ import (
 	"database/sql/driver"
 	"testing"
 
-	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap-go"
 )
 
 // Helper function to convert interface slice to driver.NamedValue slice

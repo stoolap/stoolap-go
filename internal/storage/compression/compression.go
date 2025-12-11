@@ -18,7 +18,7 @@ package compression
 import (
 	"errors"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // Common errors

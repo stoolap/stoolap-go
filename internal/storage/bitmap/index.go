@@ -33,8 +33,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/binser"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/binser"
 )
 
 // Index represents a bitmap index for one or more columns

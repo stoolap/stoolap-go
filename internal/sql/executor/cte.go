@@ -20,8 +20,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/stoolap/stoolap/internal/parser"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/parser"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // CTERegistry manages CTE execution and results

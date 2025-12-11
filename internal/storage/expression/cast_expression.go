@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // CastExpression represents a CAST(column AS type) expression

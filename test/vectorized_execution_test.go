@@ -25,8 +25,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // TestVectorizedExecution tests basic functionality of vectorized execution

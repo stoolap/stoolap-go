@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/expression"
-	"github.com/stoolap/stoolap/internal/storage/mvcc"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/expression"
+	"github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 // TestColumnarIndexComprehensive performs comprehensive testing of the ColumnarIndex implementation,

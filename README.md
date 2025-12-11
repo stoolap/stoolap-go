@@ -3,10 +3,10 @@
 </div>
 
 <p align="center">
-  <a href="https://goreportcard.com/report/github.com/stoolap/stoolap"><img src="https://goreportcard.com/badge/github.com/stoolap/stoolap?style=flat-square" alt="Go Report Card"></a>
-  <a href="https://pkg.go.dev/github.com/stoolap/stoolap"><img src="https://img.shields.io/badge/go.dev-reference-007d9c?style=flat-square" alt="go.dev reference"></a>
-  <a href="https://github.com/stoolap/stoolap/releases"><img src="https://img.shields.io/github/v/release/stoolap/stoolap?style=flat-square" alt="GitHub release"></a>
-  <a href="https://github.com/stoolap/stoolap/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache License 2.0"></a>
+  <a href="https://goreportcard.com/report/github.com/stoolap/stoolap-go"><img src="https://goreportcard.com/badge/github.com/stoolap/stoolap-go?style=flat-square" alt="Go Report Card"></a>
+  <a href="https://pkg.go.dev/github.com/stoolap/stoolap-go"><img src="https://img.shields.io/badge/go.dev-reference-007d9c?style=flat-square" alt="go.dev reference"></a>
+  <a href="https://github.com/stoolap/stoolap-go/releases"><img src="https://img.shields.io/github/v/release/stoolap/stoolap-go?style=flat-square" alt="GitHub release"></a>
+  <a href="https://github.com/stoolap/stoolap-go/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache License 2.0"></a>
 </p>
 
 # Stoolap
@@ -31,13 +31,13 @@ Stoolap is a high-performance, columnar SQL database written in pure Go with zer
 ## Installation
 
 ```bash
-go get github.com/stoolap/stoolap
+go get github.com/stoolap/stoolap-go
 ```
 
 Or clone the repository and build from source:
 
 ```bash
-git clone https://github.com/stoolap/stoolap.git
+git clone https://github.com/stoolap/stoolap-go.git
 cd stoolap
 go build -o stoolap ./cmd/stoolap
 go build -o stoolap-pgserver ./cmd/stoolap-pgserver
@@ -71,7 +71,7 @@ import (
 	"fmt"
 	"log"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 func main() {

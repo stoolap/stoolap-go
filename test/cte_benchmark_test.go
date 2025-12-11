@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // BenchmarkSimpleCTE benchmarks basic CTE performance

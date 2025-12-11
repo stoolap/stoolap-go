@@ -21,12 +21,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/stoolap/stoolap/internal/functions/registry"
-	"github.com/stoolap/stoolap/internal/parser/funcregistry"
+	"github.com/stoolap/stoolap-go/internal/functions/registry"
+	"github.com/stoolap/stoolap-go/internal/parser/funcregistry"
 
-	_ "github.com/stoolap/stoolap/internal/functions/aggregate"
-	_ "github.com/stoolap/stoolap/internal/functions/scalar"
-	_ "github.com/stoolap/stoolap/internal/functions/window"
+	_ "github.com/stoolap/stoolap-go/internal/functions/aggregate"
+	_ "github.com/stoolap/stoolap-go/internal/functions/scalar"
+	_ "github.com/stoolap/stoolap-go/internal/functions/window"
 )
 
 // Precedence levels for operators

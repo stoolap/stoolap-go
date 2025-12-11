@@ -21,11 +21,11 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/sql"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/sql"
+	"github.com/stoolap/stoolap-go/internal/storage"
 
 	// Import necessary packages to register factory functions
-	_ "github.com/stoolap/stoolap/internal/storage/mvcc"
+	_ "github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 func TestAggregateOrdering(t *testing.T) {

@@ -18,7 +18,7 @@ package test
 import (
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/sql/executor/vectorized"
+	"github.com/stoolap/stoolap-go/internal/sql/executor/vectorized"
 )
 
 // TestSIMDFunctions tests that our SIMD optimized functions work correctly

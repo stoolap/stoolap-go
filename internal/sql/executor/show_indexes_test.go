@@ -21,9 +21,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/parser"
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/mvcc"
+	"github.com/stoolap/stoolap-go/internal/parser"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 func TestShowIndexesMultiColumn(t *testing.T) {

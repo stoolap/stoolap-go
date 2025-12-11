@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/stoolap/stoolap/pkg/driver" // Import the Stoolap driver
+	_ "github.com/stoolap/stoolap-go/pkg/driver" // Import the Stoolap driver
 )
 
 func TestInsertWithFunctions(t *testing.T) {

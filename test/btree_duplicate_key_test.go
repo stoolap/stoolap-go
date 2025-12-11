@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/btree"
+	"github.com/stoolap/stoolap-go/internal/btree"
 )
 
 // TestBTreeDuplicateKeyAfterSplit tests the bug where inserting a key that equals

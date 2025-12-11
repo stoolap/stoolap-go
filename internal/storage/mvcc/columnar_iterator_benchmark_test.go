@@ -18,8 +18,8 @@ package mvcc
 import (
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/expression"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/expression"
 )
 
 // BenchmarkColumnarIterator benchmarks the performance of our new ColumnarIndexIterator implementation

@@ -24,9 +24,9 @@ import (
 	"time"
 
 	// Import stoolap driver
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/common"
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/common"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestAutoIncrementPKTable tests auto-increment functionality for a table with an explicit primary key

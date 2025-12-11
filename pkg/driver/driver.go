@@ -25,12 +25,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/sql/executor"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/sql/executor"
+	"github.com/stoolap/stoolap-go/internal/storage"
 
 	// Import database storage engine
-	_ "github.com/stoolap/stoolap/internal/storage/mvcc"
+	_ "github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 // StmtKey is the key used for statement cache lookups

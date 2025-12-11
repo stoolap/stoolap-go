@@ -18,7 +18,7 @@ package mvcc
 import (
 	"sync"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // Pool for MVCCDirectScanner instances to reduce allocations

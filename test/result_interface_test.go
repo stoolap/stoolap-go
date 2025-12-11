@@ -19,7 +19,7 @@ import (
 	"context"
 	"testing"
 
-	sql "github.com/stoolap/stoolap/internal/sql/executor"
+	sql "github.com/stoolap/stoolap-go/internal/sql/executor"
 )
 
 // TestExecResultImplementation verifies that the ExecResult implementation correctly

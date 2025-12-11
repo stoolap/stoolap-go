@@ -22,8 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/fastmap"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/fastmap"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // RowVersion represents a specific version of a row with complete data

@@ -16,10 +16,10 @@ limitations under the License.
 package scalar
 
 import (
-	"github.com/stoolap/stoolap/internal/common"
-	"github.com/stoolap/stoolap/internal/functions/contract"
-	"github.com/stoolap/stoolap/internal/functions/registry"
-	"github.com/stoolap/stoolap/internal/parser/funcregistry"
+	"github.com/stoolap/stoolap-go/internal/common"
+	"github.com/stoolap/stoolap-go/internal/functions/contract"
+	"github.com/stoolap/stoolap-go/internal/functions/registry"
+	"github.com/stoolap/stoolap-go/internal/parser/funcregistry"
 )
 
 // VersionFunction implements the VERSION() function

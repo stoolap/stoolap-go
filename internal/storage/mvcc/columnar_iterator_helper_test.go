@@ -20,7 +20,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // TestIntersectSortedIDs tests the intersectSortedIDs helper function

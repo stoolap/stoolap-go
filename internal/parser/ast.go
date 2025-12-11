@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/stoolap/stoolap/internal/parser/funcregistry"
+	"github.com/stoolap/stoolap-go/internal/parser/funcregistry"
 )
 
 // Node represents a node in the AST

@@ -20,7 +20,7 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // This is a minimal test to verify that the executor can be created

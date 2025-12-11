@@ -16,7 +16,7 @@ limitations under the License.
 package contract
 
 import (
-	"github.com/stoolap/stoolap/internal/parser/funcregistry"
+	"github.com/stoolap/stoolap-go/internal/parser/funcregistry"
 )
 
 // Function is the interface that all SQL functions must implement

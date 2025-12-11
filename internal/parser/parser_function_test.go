@@ -18,7 +18,7 @@ package parser
 import (
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/parser/funcregistry"
+	"github.com/stoolap/stoolap-go/internal/parser/funcregistry"
 )
 
 func TestFunctionCallParsing(t *testing.T) {

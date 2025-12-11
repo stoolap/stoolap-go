@@ -20,7 +20,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/sql/executor/vectorized"
+	"github.com/stoolap/stoolap-go/internal/sql/executor/vectorized"
 )
 
 // BenchmarkSIMDOperations tests the performance of our SIMD operations

@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/parser"
+	"github.com/stoolap/stoolap-go/internal/parser"
 )
 
 // getParser creates a new parser with functions registered

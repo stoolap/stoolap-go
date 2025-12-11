@@ -19,7 +19,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/functions/aggregate"
+	"github.com/stoolap/stoolap-go/internal/functions/aggregate"
 )
 
 // TestCount tests the COUNT aggregate function with various edge cases

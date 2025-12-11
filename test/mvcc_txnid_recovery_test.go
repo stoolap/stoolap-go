@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/common"
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/mvcc"
+	"github.com/stoolap/stoolap-go/internal/common"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 // TestTransactionIDsVisibilityAfterRecovery verifies that transaction IDs are properly

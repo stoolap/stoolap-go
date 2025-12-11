@@ -1,4 +1,4 @@
-module github.com/stoolap/stoolap/cmd/stoolap
+module github.com/stoolap/stoolap-go/cmd/stoolap
 
 go 1.23.0
 
@@ -6,7 +6,7 @@ require (
 	github.com/chzyer/readline v1.5.1
 	github.com/jedib0t/go-pretty/v6 v6.6.7
 	github.com/spf13/cobra v1.9.1
-	github.com/stoolap/stoolap v0.1.2
+	github.com/stoolap/stoolap-go v0.1.2
 )
 
 require (

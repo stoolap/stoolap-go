@@ -19,7 +19,7 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestHashOptimizationSimple tests basic IN subquery functionality

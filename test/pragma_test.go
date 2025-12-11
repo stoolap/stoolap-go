@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	// Import stoolap driver
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestPragmaCommands tests the PRAGMA statement functionality

@@ -21,7 +21,7 @@ import (
 	"time"
 
 	// Import for side effects - driver registration
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // BenchmarkTimestampOperations tests timestamp operations with and without columnar index

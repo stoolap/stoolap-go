@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/common"
+	"github.com/stoolap/stoolap-go/internal/common"
 )
 
 func TestWALEncodeDecode(t *testing.T) {

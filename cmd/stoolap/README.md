@@ -5,7 +5,7 @@ The official command-line interface for Stoolap - a high-performance embedded SQ
 ## Installation
 
 ```bash
-go install github.com/stoolap/stoolap/cmd/stoolap@latest
+go install github.com/stoolap/stoolap-go/cmd/stoolap@latest
 ```
 
 ## Usage

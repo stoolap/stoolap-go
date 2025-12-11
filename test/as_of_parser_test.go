@@ -18,7 +18,7 @@ package test
 import (
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/parser"
+	"github.com/stoolap/stoolap-go/internal/parser"
 )
 
 func TestAsOfParser(t *testing.T) {

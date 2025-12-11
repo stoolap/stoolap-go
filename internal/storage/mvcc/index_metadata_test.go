@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/common"
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/binser"
+	"github.com/stoolap/stoolap-go/internal/common"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/binser"
 )
 
 // Duplicate the binser type constants needed for testing

@@ -19,8 +19,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/functions/scalar"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/functions/scalar"
 )
 
 func TestCastDiagnosis(t *testing.T) {

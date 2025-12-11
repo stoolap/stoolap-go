@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // testColumnValue is a simple implementation of storage.ColumnValue for testing

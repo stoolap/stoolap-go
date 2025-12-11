@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/stoolap/stoolap/internal/functions/contract"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/functions/contract"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // ArrayAggregateResult is an optimized aggregate result using arrays instead of maps

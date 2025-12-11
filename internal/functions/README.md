@@ -44,7 +44,7 @@ Functions automatically register themselves with the global registry when their 
    - No manual registration in registry.go is needed
 
 4. Import your function package:
-   - Either explicitly (`import _ "github.com/stoolap/stoolap/internal/functions/scalar/myfunc"`)
+   - Either explicitly (`import _ "github.com/stoolap/stoolap-go/internal/functions/scalar/myfunc"`)
    - Or implicitly (by referencing something from the package)
 
 ## Example: Creating a New Scalar Function
@@ -55,8 +55,8 @@ package myscalar
 import (
 	"fmt"
 	
-	"github.com/stoolap/stoolap/internal/functions/contract"
-	"github.com/stoolap/stoolap/internal/parser/funcregistry"
+	"github.com/stoolap/stoolap-go/internal/functions/contract"
+	"github.com/stoolap/stoolap-go/internal/parser/funcregistry"
 )
 
 // MyFunction implements a custom scalar function

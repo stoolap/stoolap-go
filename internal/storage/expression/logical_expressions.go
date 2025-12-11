@@ -16,7 +16,7 @@ limitations under the License.
 package expression
 
 import (
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // AndExpression represents a logical AND of multiple expressions

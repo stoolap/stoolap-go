@@ -20,8 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/parser"
-	_ "github.com/stoolap/stoolap/pkg/driver" // Import the driver for side effects
+	"github.com/stoolap/stoolap-go/internal/parser"
+	_ "github.com/stoolap/stoolap-go/pkg/driver" // Import the driver for side effects
 )
 
 func TestInsertOnDuplicateKeyUpdate(t *testing.T) {

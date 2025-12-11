@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/expression"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/expression"
 )
 
 // TestMultiColumnarIndexBasic tests the basic functionality of the multi-column index

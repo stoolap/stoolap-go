@@ -18,8 +18,8 @@ package test
 import (
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/bitmap"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/bitmap"
 )
 
 func TestBitmapLikePatternMatching(t *testing.T) {

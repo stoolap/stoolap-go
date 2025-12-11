@@ -19,7 +19,7 @@ package common
 import (
 	"sync"
 
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // Global sync.Pool for map[string]storage.ColumnValue to reduce allocations

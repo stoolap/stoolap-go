@@ -19,9 +19,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/expression"
-	"github.com/stoolap/stoolap/internal/storage/mvcc"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/expression"
+	"github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 // setupBenchmarkTable creates a table with 10,000 rows for benchmarking

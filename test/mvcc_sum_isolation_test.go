@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestMVCCSumConsistency tests that SUM aggregation sees a consistent snapshot

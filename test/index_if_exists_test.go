@@ -22,8 +22,8 @@ import (
 	"testing"
 
 	// Import stoolap driver
-	"github.com/stoolap/stoolap/internal/common"
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	"github.com/stoolap/stoolap-go/internal/common"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestIndexIfExistsOperations tests CREATE/DROP INDEX IF EXISTS operations

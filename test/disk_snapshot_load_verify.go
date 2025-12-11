@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/common"
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	"github.com/stoolap/stoolap-go/internal/common"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestBooleanColumnarIndexBulkDelete tests a bulk insert of 50,000 rows with a boolean column,

@@ -26,8 +26,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // TestHighConcurrencyDirtyWrite tests dirty write prevention under extreme concurrency

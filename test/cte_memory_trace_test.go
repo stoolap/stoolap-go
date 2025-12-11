@@ -21,7 +21,7 @@ import (
 	"runtime"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestCTEMemoryTrace traces memory allocations in CTE execution

@@ -23,7 +23,7 @@ import (
 	"sync"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 func TestSQLDriverBasicOperations(t *testing.T) {

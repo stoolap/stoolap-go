@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // BenchmarkCTEMaterialization benchmarks CTE materialization performance

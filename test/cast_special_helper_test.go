@@ -19,7 +19,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap-go"
 )
 
 // TestCastSpecialHelper creates a specialized test to diagnose the CAST issue

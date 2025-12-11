@@ -28,8 +28,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/stoolap/stoolap"
-	"github.com/stoolap/stoolap/internal/common"
+	"github.com/stoolap/stoolap-go"
+	"github.com/stoolap/stoolap-go/internal/common"
 )
 
 type server struct {

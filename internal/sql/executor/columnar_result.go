@@ -19,8 +19,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/mvcc"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 // ColumnarResult stores data in column-oriented format for better memory efficiency

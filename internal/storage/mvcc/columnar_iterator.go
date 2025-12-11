@@ -18,9 +18,9 @@ package mvcc
 import (
 	"slices"
 
-	"github.com/stoolap/stoolap/internal/fastmap"
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/expression"
+	"github.com/stoolap/stoolap-go/internal/fastmap"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/expression"
 )
 
 // ColumnarIndexIterator provides direct and efficient iteration over columnar index matches

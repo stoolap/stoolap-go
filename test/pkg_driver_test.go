@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap"
+	"github.com/stoolap/stoolap-go"
 )
 
 func TestDriverBasicOperations(t *testing.T) {

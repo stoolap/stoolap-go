@@ -16,7 +16,7 @@ limitations under the License.
 package expression
 
 import (
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // NOTE: The EvalExpression is currently only used for testing purposes

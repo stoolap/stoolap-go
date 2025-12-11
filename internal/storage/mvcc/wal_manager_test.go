@@ -26,8 +26,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stoolap/stoolap/internal/common"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/common"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // Helper functions for creating and manipulating WAL entries for testing

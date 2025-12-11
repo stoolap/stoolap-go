@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestMVCCWriteHeavyStress tests the true MVCC implementation with heavy concurrent writes

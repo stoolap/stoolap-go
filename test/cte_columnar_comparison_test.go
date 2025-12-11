@@ -21,9 +21,9 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/stoolap/stoolap/internal/sql/executor"
-	"github.com/stoolap/stoolap/internal/storage"
-	"github.com/stoolap/stoolap/internal/storage/mvcc"
+	"github.com/stoolap/stoolap-go/internal/sql/executor"
+	"github.com/stoolap/stoolap-go/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/storage/mvcc"
 )
 
 // TestColumnarCTEMemoryEfficiency tests memory efficiency of columnar CTE storage

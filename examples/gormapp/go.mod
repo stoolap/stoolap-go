@@ -1,9 +1,9 @@
-module github.com/stoolap/stoolap/examples/gormapp
+module github.com/stoolap/stoolap-go/examples/gormapp
 
 go 1.23.0
 
 require (
-	github.com/stoolap/stoolap v0.1.2
+	github.com/stoolap/stoolap-go v0.1.2
 	gorm.io/driver/mysql v1.5.4
 	gorm.io/gorm v1.25.7
 )

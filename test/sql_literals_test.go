@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/stoolap/stoolap/pkg/driver" // Import for database registration
+	_ "github.com/stoolap/stoolap-go/pkg/driver" // Import for database registration
 )
 
 func TestSQLLiterals(t *testing.T) {

@@ -5,7 +5,7 @@ This server provides PostgreSQL wire protocol compatibility for Stoolap, allowin
 ## Installation
 
 ```bash
-go install github.com/stoolap/stoolap/cmd/stoolap-pgserver@latest
+go install github.com/stoolap/stoolap-go/cmd/stoolap-pgserver@latest
 ```
 
 ## Usage

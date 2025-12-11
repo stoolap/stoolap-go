@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/stoolap/stoolap/pkg/driver"
+	_ "github.com/stoolap/stoolap-go/pkg/driver"
 )
 
 // TestIsolationLevelSession tests session-wide isolation level setting with SET ISOLATIONLEVEL

@@ -22,10 +22,10 @@ import (
 	"os"
 	"sync"
 
-	"github.com/stoolap/stoolap/internal/btree"
-	"github.com/stoolap/stoolap/internal/common"
-	"github.com/stoolap/stoolap/internal/fastmap"
-	"github.com/stoolap/stoolap/internal/storage"
+	"github.com/stoolap/stoolap-go/internal/btree"
+	"github.com/stoolap/stoolap-go/internal/common"
+	"github.com/stoolap/stoolap-go/internal/fastmap"
+	"github.com/stoolap/stoolap-go/internal/storage"
 )
 
 // DiskReader handles reading row versions from disk
