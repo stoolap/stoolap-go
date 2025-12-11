@@ -1,5 +1,4 @@
 //go:build ignore
-// +build ignore
 
 /*
 Copyright 2025 Stoolap Contributors
