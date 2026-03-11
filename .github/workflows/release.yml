@@ -1,4 +1,4 @@
-name: Publish
+name: Release
 
 on:
   push:
@@ -13,7 +13,7 @@ env:
 jobs:
   build:
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         settings:
           - host: macos-latest
@@ -30,8 +30,6 @@ jobs:
     name: Build - ${{ matrix.settings.target }}
     runs-on: ${{ matrix.settings.host }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Clone stoolap engine
         run: git clone --depth 1 --branch ${{ env.STOOLAP_ENGINE_REF }} https://github.com/stoolap/stoolap.git stoolap-engine
 
@@ -85,10 +83,10 @@ jobs:
           if-no-files-found: error
 
   test:
-    name: Test (${{ matrix.settings.os }})
+    name: Test - go${{ matrix.go }} (${{ matrix.settings.os }})
     needs: build
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         settings:
           - os: macos-latest
@@ -100,13 +98,14 @@ jobs:
           - os: windows-latest
             artifact: lib-x86_64-pc-windows-gnu
             lib_dir: lib/windows_amd64
+        go: ['1.24', '1.25', '1.26']
     runs-on: ${{ matrix.settings.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: ${{ matrix.go }}
 
       - name: Download static library
         uses: actions/download-artifact@v4
@@ -116,16 +115,78 @@ jobs:
 
       - name: Run tests
         shell: bash
-        run: go test -v -count=1 ./...
+        run: |
+          go vet ./...
+          go test -v -count=1 ./...
         env:
           CGO_ENABLED: '1'
 
   release:
-    name: Create Release
+    name: Commit, Tag & Release
+    needs: [test, build]
     runs-on: ubuntu-latest
-    needs: test
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          lfs: true
+
+      - name: Setup Git LFS
+        run: git lfs install
+
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download darwin arm64
+        uses: actions/download-artifact@v4
+        with:
+          name: lib-aarch64-apple-darwin
+          path: lib/darwin_arm64
+
+      - name: Download linux amd64
+        uses: actions/download-artifact@v4
+        with:
+          name: lib-x86_64-unknown-linux-gnu
+          path: lib/linux_amd64
+
+      - name: Download windows amd64
+        uses: actions/download-artifact@v4
+        with:
+          name: lib-x86_64-pc-windows-gnu
+          path: lib/windows_amd64
+
+      - name: Update go.mod versions
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          sed -i "s|lib/darwin_arm64 v[0-9.]*|lib/darwin_arm64 v${VERSION}|" go.mod
+          sed -i "s|lib/linux_amd64 v[0-9.]*|lib/linux_amd64 v${VERSION}|" go.mod
+          sed -i "s|lib/windows_amd64 v[0-9.]*|lib/windows_amd64 v${VERSION}|" go.mod
+          sed -i "s|stoolap-go v[0-9.]*|stoolap-go v${VERSION}|" example/benchmark/go.mod
+          sed -i "s|lib/darwin_arm64 v[0-9.]*|lib/darwin_arm64 v${VERSION}|" example/benchmark/go.mod
+          sed -i "s|lib/linux_amd64 v[0-9.]*|lib/linux_amd64 v${VERSION}|" example/benchmark/go.mod
+          sed -i "s|lib/windows_amd64 v[0-9.]*|lib/windows_amd64 v${VERSION}|" example/benchmark/go.mod
+
+      - name: Commit static libraries
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add lib/*/libstoolap.a go.mod example/benchmark/go.mod
+          git commit -m "Release v${{ steps.version.outputs.VERSION }} (stoolap ${{ env.STOOLAP_ENGINE_REF }})"
+          git push origin main
+
+      - name: Move tag and create lib tags
+        run: |
+          VERSION="v${{ steps.version.outputs.VERSION }}"
+          # Move the main tag to include the .a files
+          git tag -f "${VERSION}"
+          git push origin "${VERSION}" --force
+          # Create lib submodule tags
+          git tag "lib/darwin_arm64/${VERSION}"
+          git tag "lib/linux_amd64/${VERSION}"
+          git tag "lib/windows_amd64/${VERSION}"
+          git push origin "lib/darwin_arm64/${VERSION}" "lib/linux_amd64/${VERSION}" "lib/windows_amd64/${VERSION}"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -133,7 +194,6 @@ jobs:
           path: artifacts
 
       - name: Prepare release assets
-        shell: bash
         run: |
           mkdir -p release
 
@@ -148,12 +208,12 @@ jobs:
           for target in "${!NAMES[@]}"; do
             src=$(ls artifacts/lib-${target}/*)
             dest="release/${NAMES[$target]}"
-            echo "Copying $src -> $dest"
             cp "$src" "$dest"
           done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
           files: release/*
