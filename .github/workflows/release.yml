@@ -70,13 +70,13 @@ jobs:
         if: runner.os == 'macOS'
         run: install_name_tool -id @rpath/libstoolap.dylib stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
 
-      - name: Strip shared library (Unix)
-        if: runner.os != 'Windows'
+      - name: Strip shared library
+        shell: bash
         run: |
           if [[ "${{ matrix.settings.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            aarch64-linux-gnu-strip -x stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
+            aarch64-linux-gnu-strip stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
           else
-            strip -x stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
+            strip stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
           fi
 
       - name: Upload shared library
