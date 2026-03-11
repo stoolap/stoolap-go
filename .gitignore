@@ -1,11 +1,13 @@
 # Binaries
 *.exe
-*.dll
-*.so
-*.dylib
 
-# Static libraries (local builds — lib/*/*.a are committed by CI)
-/libstoolap.a
+# Shared libraries (local builds — lib/*/ are committed by CI)
+/*.dylib
+/*.so
+/*.dll
+
+# Static libraries (local builds)
+*.a
 
 # Profiling
 *.prof

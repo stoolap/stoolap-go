@@ -19,6 +19,6 @@ limitations under the License.
 package stoolaplib
 
 /*
-#cgo LDFLAGS: -L${SRCDIR} -lstoolap -liconv -framework CoreFoundation -lm
+#cgo LDFLAGS: -L${SRCDIR} -lstoolap -Wl,-rpath,${SRCDIR} -liconv -framework CoreFoundation -lm
 */
 import "C"

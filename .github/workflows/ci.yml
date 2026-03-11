@@ -22,24 +22,19 @@ jobs:
         settings:
           - host: macos-latest
             target: aarch64-apple-darwin
-            lib_dir: lib/darwin_arm64
+            lib_file: libstoolap.dylib
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            lib_dir: lib/linux_amd64
+            lib_file: libstoolap.so
           - host: windows-latest
             target: x86_64-pc-windows-gnu
-            lib_dir: lib/windows_amd64
+            lib_file: stoolap.dll
 
     name: Build - ${{ matrix.settings.target }}
     runs-on: ${{ matrix.settings.host }}
     steps:
       - name: Clone stoolap engine
         run: git clone --depth 1 --branch ${{ env.STOOLAP_ENGINE_REF }} https://github.com/stoolap/stoolap.git stoolap-engine
-
-      - name: Enable staticlib output
-        shell: bash
-        working-directory: stoolap-engine
-        run: sed -i.bak 's/crate-type = \["cdylib", "rlib"\]/crate-type = ["cdylib", "staticlib", "rlib"]/' Cargo.toml
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -57,19 +52,19 @@ jobs:
           workspaces: stoolap-engine
           key: ${{ matrix.settings.target }}
 
-      - name: Build stoolap static library
+      - name: Build stoolap shared library
         working-directory: stoolap-engine
         run: cargo build --release --features ffi --target ${{ matrix.settings.target }}
 
-      - name: Strip static library (Unix)
+      - name: Strip shared library (Unix)
         if: runner.os != 'Windows'
-        run: strip -S stoolap-engine/target/${{ matrix.settings.target }}/release/libstoolap.a
+        run: strip -x stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
 
-      - name: Upload static library
+      - name: Upload shared library
         uses: actions/upload-artifact@v4
         with:
           name: lib-${{ matrix.settings.target }}
-          path: stoolap-engine/target/${{ matrix.settings.target }}/release/libstoolap.a
+          path: stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
           if-no-files-found: error
 
   test:
@@ -97,7 +92,7 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
 
-      - name: Download static library
+      - name: Download shared library
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.settings.artifact }}
@@ -106,6 +101,8 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
+          export PATH="${{ github.workspace }}/${{ matrix.settings.lib_dir }}:$PATH"
+          export LD_LIBRARY_PATH="${{ github.workspace }}/${{ matrix.settings.lib_dir }}"
           go vet ./...
           go test -v -count=1 ./...
         env:

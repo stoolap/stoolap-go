@@ -19,6 +19,6 @@ limitations under the License.
 package stoolaplib
 
 /*
-#cgo LDFLAGS: -L${SRCDIR} -lstoolap -ldl -lpthread -lgcc_s -lrt -lm
+#cgo LDFLAGS: -L${SRCDIR} -lstoolap -Wl,-rpath,${SRCDIR} -ldl -lpthread -lgcc_s -lrt -lm
 */
 import "C"

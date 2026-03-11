@@ -1,3 +1,4 @@
-lib/darwin_arm64/libstoolap.a filter=lfs diff=lfs merge=lfs -text
-lib/linux_amd64/libstoolap.a filter=lfs diff=lfs merge=lfs -text
-lib/windows_amd64/libstoolap.a filter=lfs diff=lfs merge=lfs -text
+*.dylib binary
+*.so binary
+*.dll binary
+*.dll.a binary

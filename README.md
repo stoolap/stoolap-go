@@ -18,8 +18,11 @@ Provides two ways to use Stoolap from Go:
 go get github.com/stoolap/stoolap-go
 ```
 
-Prebuilt static libraries for macOS (arm64), Linux (x64), and Windows (x64) are bundled
+Prebuilt shared libraries for macOS (arm64), Linux (x64), and Windows (x64) are bundled
 in the module. No extra downloads or environment variables needed — just `go get` and build.
+
+The compiled Go binary dynamically links against `libstoolap`. For deployment, place the
+shared library next to your executable or in a system library path.
 
 ### Other Platforms
 
@@ -543,9 +546,9 @@ stoolap-go/
   stoolap.go              Direct API (DB, Rows, Row, Stmt, Tx)
   stoolap_test.go         Direct API tests
   lib/
-    darwin_arm64/          Prebuilt static library (separate Go module)
-    linux_amd64/           Prebuilt static library (separate Go module)
-    windows_amd64/         Prebuilt static library (separate Go module)
+    darwin_arm64/          Prebuilt shared library (separate Go module)
+    linux_amd64/           Prebuilt shared library (separate Go module)
+    windows_amd64/         Prebuilt shared library (separate Go module)
   internal/
     cs/
       cs.go               cgo bindings to libstoolap C API
@@ -560,7 +563,7 @@ stoolap-go/
       transaction.go      driver.Tx implementation
       helpers.go          Value conversion helpers
       driver_test.go      database/sql integration tests
-  cmd/
+  example/
     benchmark/
       main.go             Stoolap vs SQLite benchmark harness
   go.mod

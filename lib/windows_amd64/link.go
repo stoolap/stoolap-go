@@ -19,6 +19,6 @@ limitations under the License.
 package stoolaplib
 
 /*
-#cgo LDFLAGS: -L${SRCDIR} -lstoolap -lws2_32 -lbcrypt -luserenv -lntdll -ladvapi32 -lkernel32
+#cgo LDFLAGS: -L${SRCDIR} -l:stoolap.dll -lws2_32 -lbcrypt -luserenv -lntdll -ladvapi32 -lkernel32
 */
 import "C"

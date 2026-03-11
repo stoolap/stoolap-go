@@ -18,25 +18,25 @@ jobs:
         settings:
           - host: macos-latest
             target: aarch64-apple-darwin
+            lib_file: libstoolap.dylib
           - host: macos-latest
             target: x86_64-apple-darwin
+            lib_file: libstoolap.dylib
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            lib_file: libstoolap.so
           - host: ubuntu-latest
             target: aarch64-unknown-linux-gnu
+            lib_file: libstoolap.so
           - host: windows-latest
             target: x86_64-pc-windows-gnu
+            lib_file: stoolap.dll
 
     name: Build - ${{ matrix.settings.target }}
     runs-on: ${{ matrix.settings.host }}
     steps:
       - name: Clone stoolap engine
         run: git clone --depth 1 --branch ${{ env.STOOLAP_ENGINE_REF }} https://github.com/stoolap/stoolap.git stoolap-engine
-
-      - name: Enable staticlib output
-        shell: bash
-        working-directory: stoolap-engine
-        run: sed -i.bak 's/crate-type = \["cdylib", "rlib"\]/crate-type = ["cdylib", "staticlib", "rlib"]/' Cargo.toml
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -60,26 +60,26 @@ jobs:
           workspaces: stoolap-engine
           key: ${{ matrix.settings.target }}
 
-      - name: Build stoolap static library
+      - name: Build stoolap shared library
         working-directory: stoolap-engine
         run: cargo build --release --features ffi --target ${{ matrix.settings.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
-      - name: Strip static library (Unix)
+      - name: Strip shared library (Unix)
         if: runner.os != 'Windows'
         run: |
           if [[ "${{ matrix.settings.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            aarch64-linux-gnu-strip -S stoolap-engine/target/${{ matrix.settings.target }}/release/libstoolap.a
+            aarch64-linux-gnu-strip -x stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
           else
-            strip -S stoolap-engine/target/${{ matrix.settings.target }}/release/libstoolap.a
+            strip -x stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
           fi
 
-      - name: Upload static library
+      - name: Upload shared library
         uses: actions/upload-artifact@v4
         with:
           name: lib-${{ matrix.settings.target }}
-          path: stoolap-engine/target/${{ matrix.settings.target }}/release/libstoolap.a
+          path: stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
           if-no-files-found: error
 
   test:
@@ -107,7 +107,7 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
 
-      - name: Download static library
+      - name: Download shared library
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.settings.artifact }}
@@ -116,6 +116,8 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
+          export PATH="${{ github.workspace }}/${{ matrix.settings.lib_dir }}:$PATH"
+          export LD_LIBRARY_PATH="${{ github.workspace }}/${{ matrix.settings.lib_dir }}"
           go vet ./...
           go test -v -count=1 ./...
         env:
@@ -130,10 +132,6 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          lfs: true
-
-      - name: Setup Git LFS
-        run: git lfs install
 
       - name: Extract version
         id: version
@@ -168,18 +166,18 @@ jobs:
           sed -i "s|lib/linux_amd64 v[0-9.]*|lib/linux_amd64 v${VERSION}|" example/benchmark/go.mod
           sed -i "s|lib/windows_amd64 v[0-9.]*|lib/windows_amd64 v${VERSION}|" example/benchmark/go.mod
 
-      - name: Commit static libraries
+      - name: Commit shared libraries
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add lib/*/libstoolap.a go.mod example/benchmark/go.mod
+          git add lib/ go.mod example/benchmark/go.mod
           git commit -m "Release v${{ steps.version.outputs.VERSION }} (stoolap ${{ env.STOOLAP_ENGINE_REF }})"
           git push origin main
 
       - name: Move tag and create lib tags
         run: |
           VERSION="v${{ steps.version.outputs.VERSION }}"
-          # Move the main tag to include the .a files
+          # Move the main tag to include the shared libraries
           git tag -f "${VERSION}"
           git push origin "${VERSION}" --force
           # Create lib submodule tags
@@ -198,11 +196,11 @@ jobs:
           mkdir -p release
 
           declare -A NAMES=(
-            ["aarch64-apple-darwin"]="libstoolap-darwin-arm64.a"
-            ["x86_64-apple-darwin"]="libstoolap-darwin-x64.a"
-            ["x86_64-unknown-linux-gnu"]="libstoolap-linux-x64.a"
-            ["aarch64-unknown-linux-gnu"]="libstoolap-linux-arm64.a"
-            ["x86_64-pc-windows-gnu"]="libstoolap-windows-x64.a"
+            ["aarch64-apple-darwin"]="libstoolap-darwin-arm64.dylib"
+            ["x86_64-apple-darwin"]="libstoolap-darwin-x64.dylib"
+            ["x86_64-unknown-linux-gnu"]="libstoolap-linux-x64.so"
+            ["aarch64-unknown-linux-gnu"]="libstoolap-linux-arm64.so"
+            ["x86_64-pc-windows-gnu"]="stoolap-windows-x64.dll"
           )
 
           for target in "${!NAMES[@]}"; do
