@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags-ignore: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  STOOLAP_ENGINE_REF: v0.3.5
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            lib_dir: lib/darwin_arm64
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            lib_dir: lib/linux_amd64
+          - host: windows-latest
+            target: x86_64-pc-windows-gnu
+            lib_dir: lib/windows_amd64
+
+    name: Build - ${{ matrix.settings.target }}
+    runs-on: ${{ matrix.settings.host }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone stoolap engine
+        run: git clone --depth 1 --branch ${{ env.STOOLAP_ENGINE_REF }} https://github.com/stoolap/stoolap.git stoolap-engine
+
+      - name: Enable staticlib output
+        shell: bash
+        working-directory: stoolap-engine
+        run: sed -i.bak 's/crate-type = \["cdylib", "rlib"\]/crate-type = ["cdylib", "staticlib", "rlib"]/' Cargo.toml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+
+      - name: Add MinGW to PATH
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "C:/msys64/mingw64/bin" >> $GITHUB_PATH
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stoolap-engine
+          key: ${{ matrix.settings.target }}
+
+      - name: Build stoolap static library
+        working-directory: stoolap-engine
+        run: cargo build --release --features ffi --target ${{ matrix.settings.target }}
+
+      - name: Strip static library (Unix)
+        if: runner.os != 'Windows'
+        run: strip -S stoolap-engine/target/${{ matrix.settings.target }}/release/libstoolap.a
+
+      - name: Upload static library
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-${{ matrix.settings.target }}
+          path: stoolap-engine/target/${{ matrix.settings.target }}/release/libstoolap.a
+          if-no-files-found: error
+
+  test:
+    name: Test - go${{ matrix.go }} (${{ matrix.settings.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - os: macos-latest
+            artifact: lib-aarch64-apple-darwin
+            lib_dir: lib/darwin_arm64
+          - os: ubuntu-latest
+            artifact: lib-x86_64-unknown-linux-gnu
+            lib_dir: lib/linux_amd64
+          - os: windows-latest
+            artifact: lib-x86_64-pc-windows-gnu
+            lib_dir: lib/windows_amd64
+        go: ['1.24', '1.25', '1.26']
+    runs-on: ${{ matrix.settings.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Download static library
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.settings.artifact }}
+          path: ${{ matrix.settings.lib_dir }}
+
+      - name: Run tests
+        shell: bash
+        run: |
+          go vet ./...
+          go test -v -count=1 ./...
+        env:
+          CGO_ENABLED: '1'

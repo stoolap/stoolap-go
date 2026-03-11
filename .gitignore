@@ -1,0 +1,30 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Static libraries (built by CI)
+*.a
+
+# Profiling
+*.prof
+
+# Test binary
+*.test
+
+# Coverage
+*.out
+
+# Vendor
+vendor/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
