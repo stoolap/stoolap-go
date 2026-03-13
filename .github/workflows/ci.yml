@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  STOOLAP_ENGINE_REF: v0.3.5
+  STOOLAP_ENGINE_REF: v0.3.7
 
 jobs:
   build:
