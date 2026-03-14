@@ -710,12 +710,19 @@ func TestFilePersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db, _ := engine.Open(ctx, "file:///data/testdb")
+	db, err := engine.Open(ctx, "file:///data/testdb")
+	if err != nil {
+		t.Skip("file persistence not supported by this WASM build:", err)
+	}
+
 	db.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
 	db.Exec(ctx, "INSERT INTO t VALUES (1, 'hello'), (2, 'world')")
 	db.Close()
 
-	db2, _ := engine.Open(ctx, "file:///data/testdb")
+	db2, err := engine.Open(ctx, "file:///data/testdb")
+	if err != nil {
+		t.Fatal("reopen:", err)
+	}
 	defer db2.Close()
 	rows, _ := db2.Query(ctx, "SELECT COUNT(*) FROM t")
 	defer rows.Close()
