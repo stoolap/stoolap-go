@@ -76,8 +76,48 @@ jobs:
           path: stoolap-engine/target/${{ matrix.settings.target }}/release/${{ matrix.settings.lib_file }}
           if-no-files-found: error
 
+  build-wasm:
+    name: Build - wasm32-wasip1
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone stoolap engine
+        run: git clone --depth 1 --branch ${{ env.STOOLAP_ENGINE_REF }} https://github.com/stoolap/stoolap.git stoolap-engine
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Install wasm-opt
+        run: |
+          curl -sL https://github.com/WebAssembly/binaryen/releases/download/version_121/binaryen-version_121-x86_64-linux.tar.gz | tar xz
+          echo "$PWD/binaryen-version_121/bin" >> $GITHUB_PATH
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stoolap-engine
+          key: wasm32-wasip1
+
+      - name: Build stoolap WASM
+        working-directory: stoolap-engine
+        run: cargo build --profile max --target wasm32-wasip1 --features ffi --no-default-features
+
+      - name: Optimize WASM
+        run: wasm-opt -Oz stoolap-engine/target/wasm32-wasip1/max/stoolap.wasm -o stoolap.wasm
+
+      - name: Show size
+        run: ls -lh stoolap.wasm
+
+      - name: Upload WASM
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-stoolap
+          path: stoolap.wasm
+          if-no-files-found: error
+
   test:
-    name: Test - go${{ matrix.go }} (${{ matrix.settings.os }})
+    name: Test CGO - go${{ matrix.go }} (${{ matrix.settings.os }})
     needs: build
     strategy:
       fail-fast: false
@@ -116,3 +156,33 @@ jobs:
           go test -v -count=1 ./...
         env:
           CGO_ENABLED: '1'
+
+  test-wasm:
+    name: Test WASM - go${{ matrix.go }}
+    needs: build-wasm
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.24', '1.25', '1.26']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Download WASM
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-stoolap
+          path: wasm
+
+      - name: Run WASM driver tests
+        working-directory: wasm
+        run: |
+          go vet ./...
+          go test -v -count=1 -cover ./...
+        env:
+          STOOLAP_WASM: stoolap.wasm
+          CGO_ENABLED: '0'

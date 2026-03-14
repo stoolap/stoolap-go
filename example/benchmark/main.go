@@ -18,12 +18,8 @@ package main
 import (
 	"context"
 	"database/sql"
-	"flag"
 	"fmt"
 	"log"
-	"os"
-	"runtime"
-	"runtime/pprof"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -52,90 +48,6 @@ var (
 func init() {
 	for i := range scanPtrs {
 		scanPtrs[i] = &scanDest[i]
-	}
-}
-
-// ============================================================
-// Memory profiling
-// ============================================================
-
-var memprofile = flag.String("memprofile", "", "write heap profile to file")
-
-type memSnap struct {
-	label     string
-	heapAlloc uint64 // bytes currently allocated on heap
-	heapSys   uint64 // bytes obtained from OS for heap
-	totalAlloc uint64 // cumulative bytes allocated
-	numGC     uint32
-}
-
-var memSnaps []memSnap
-
-func takeMemSnap(label string) {
-	runtime.GC()
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	memSnaps = append(memSnaps, memSnap{
-		label:      label,
-		heapAlloc:  m.HeapAlloc,
-		heapSys:    m.HeapSys,
-		totalAlloc: m.TotalAlloc,
-		numGC:      m.NumGC,
-	})
-}
-
-func fmtMB(b uint64) string {
-	return fmt.Sprintf("%8.2f MB", float64(b)/1024/1024)
-}
-
-func printMemReport() {
-	fmt.Println()
-	fmt.Println("================================================================================")
-	fmt.Println("MEMORY PROFILE")
-	fmt.Println("================================================================================")
-	fmt.Printf("%-30s | %12s | %12s | %12s | %5s\n", "Checkpoint", "HeapAlloc", "HeapSys", "TotalAlloc", "GCs")
-	fmt.Println("--------------------------------------------------------------------------------")
-	for _, s := range memSnaps {
-		fmt.Printf("%-30s | %12s | %12s | %12s | %5d\n", s.label, fmtMB(s.heapAlloc), fmtMB(s.heapSys), fmtMB(s.totalAlloc), s.numGC)
-	}
-
-	if len(memSnaps) >= 2 {
-		first := memSnaps[0]
-		last := memSnaps[len(memSnaps)-1]
-		fmt.Println("--------------------------------------------------------------------------------")
-		fmt.Printf("%-30s | %12s | %12s | %12s | %5d\n", "DELTA (first→last)",
-			fmtMB(last.heapAlloc-first.heapAlloc),
-			fmtMB(last.heapSys-first.heapSys),
-			fmtMB(last.totalAlloc-first.totalAlloc),
-			last.numGC-first.numGC)
-		fmt.Println()
-		fmt.Println("Legend:")
-		fmt.Println("  HeapAlloc  = bytes currently live on heap (after GC)")
-		fmt.Println("  HeapSys    = bytes obtained from OS for heap")
-		fmt.Println("  TotalAlloc = cumulative bytes allocated (grows monotonically)")
-		fmt.Println("  GCs        = number of garbage collections so far")
-
-		// Flag high-growth sections
-		fmt.Println()
-		fmt.Println("Per-section heap growth (HeapAlloc delta):")
-		for i := 1; i < len(memSnaps); i++ {
-			prev := memSnaps[i-1]
-			cur := memSnaps[i]
-			var delta int64
-			delta = int64(cur.heapAlloc) - int64(prev.heapAlloc)
-			allocDelta := cur.totalAlloc - prev.totalAlloc
-			sign := "+"
-			if delta < 0 {
-				sign = "-"
-				delta = -delta
-			}
-			marker := ""
-			if delta > 1024*1024 { // > 1 MB heap growth
-				marker = " *** HIGH"
-			}
-			fmt.Printf("  %-28s  heap: %s%s  allocs: +%s%s\n",
-				cur.label, sign, fmtMB(uint64(delta)), fmtMB(allocDelta), marker)
-		}
 	}
 }
 
@@ -228,8 +140,6 @@ func queryOne(stmt *sql.Stmt, args ...any) {
 // ============================================================
 
 func main() {
-	flag.Parse()
-
 	fmt.Println("Stoolap vs SQLite (go-sqlite3) — Go Benchmark (database/sql)")
 	fmt.Printf("Configuration: %d rows, %d iterations per test\n", rowCount, iterations)
 	fmt.Println("Both engines use database/sql — fair apples-to-apples comparison")
@@ -254,8 +164,6 @@ func main() {
 	)`)
 	sdb.ExecContext(ctx, "CREATE INDEX idx_users_age ON users(age)")
 	sdb.ExecContext(ctx, "CREATE INDEX idx_users_active ON users(active)")
-
-	takeMemSnap("After Stoolap setup")
 
 	// --- SQLite setup (WAL, in-memory) ---
 	ldb, err := sql.Open("sqlite3", ":memory:")
@@ -318,8 +226,6 @@ func main() {
 	lInsert.Close()
 	lTx.Commit()
 
-	takeMemSnap("After SQLite insert")
-
 	// Stoolap bulk insert
 	sTx, _ := sdb.BeginTx(ctx, nil)
 	sInsert, _ := sTx.PrepareContext(ctx, "INSERT INTO users (id, name, email, age, balance, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -328,8 +234,6 @@ func main() {
 	}
 	sInsert.Close()
 	sTx.Commit()
-
-	takeMemSnap("After Stoolap insert")
 
 	// ============================================================
 	// CORE OPERATIONS
@@ -573,8 +477,6 @@ func main() {
 	sSt.Close()
 	lSt.Close()
 
-	takeMemSnap("After CORE ops")
-
 	// ============================================================
 	// ADVANCED OPERATIONS
 	// ============================================================
@@ -635,8 +537,6 @@ func main() {
 	}
 	sOrdInsert.Close()
 	sTx.Commit()
-
-	takeMemSnap("After orders insert")
 
 	printHeader("ADVANCED OPERATIONS")
 
@@ -841,8 +741,6 @@ func main() {
 	}
 	lUs = float64(time.Since(t0).Nanoseconds()) / float64(iters) / 1000.0
 	printRow("Batch INSERT (100 rows)", sUs, lUs)
-
-	takeMemSnap("After ADVANCED ops")
 
 	// ============================================================
 	// BOTTLENECK HUNTERS
@@ -1281,8 +1179,6 @@ func main() {
 	sSt.Close()
 	lSt.Close()
 
-	takeMemSnap("After BOTTLENECK ops")
-
 	// ============================================================
 	// Summary
 	// ============================================================
@@ -1297,22 +1193,4 @@ func main() {
 	fmt.Println("- SQLite: WAL mode, in-memory, go-sqlite3 (mattn)")
 	fmt.Println("- Ratio > 1x = Stoolap faster  |  * = SQLite faster")
 	fmt.Println("================================================================================")
-
-	// Memory report
-	printMemReport()
-
-	// Write heap profile if requested
-	if *memprofile != "" {
-		runtime.GC()
-		f, err := os.Create(*memprofile)
-		if err != nil {
-			log.Fatalf("could not create memory profile: %v", err)
-		}
-		if err := pprof.WriteHeapProfile(f); err != nil {
-			log.Fatalf("could not write memory profile: %v", err)
-		}
-		f.Close()
-		fmt.Printf("\nHeap profile written to %s\n", *memprofile)
-		fmt.Println("Analyze with: go tool pprof -top", *memprofile)
-	}
 }

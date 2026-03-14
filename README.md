@@ -1,18 +1,31 @@
 # stoolap-go
 
-Go driver for [Stoolap](https://github.com/stoolap/stoolap), a high-performance embedded columnar SQL database engine. Built on Stoolap's Rust engine via C FFI (cgo).
+Go driver for [Stoolap](https://github.com/stoolap/stoolap), a high-performance embedded SQL database built in pure Rust with MVCC transactions, cost-based optimizer, time-travel queries, parallel execution, and native vector search.
 
-Provides two ways to use Stoolap from Go:
+Two driver implementations:
 
+| | CGO Driver | WASM Driver |
+|---|---|---|
+| **Package** | `github.com/stoolap/stoolap-go` | `github.com/stoolap/stoolap-go/wasm` |
+| **CGO required** | Yes | No (pure Go) |
+| **Dependencies** | Shared library (.dylib/.so/.dll) | Single .wasm file (5 MB) |
+| **Threading** | Full (parallel queries) | Single-threaded |
+| **File persistence** | Yes | Yes (via WASI) |
+| **Cross-compile** | Needs C toolchain per target | Anywhere Go compiles |
+| **Best for** | Production, max throughput | Portability, zero dependencies |
+
+Both drivers provide:
 - **Direct API** for maximum performance and control
 - **`database/sql`** driver for standard Go database access
 
-## Requirements
+## CGO Driver
+
+### Requirements
 
 - Go 1.24+
 - CGO enabled (`CGO_ENABLED=1`, the default)
 
-## Installation
+### Installation
 
 ```bash
 go get github.com/stoolap/stoolap-go
@@ -24,7 +37,7 @@ in the module. No extra downloads or environment variables needed — just `go g
 The compiled Go binary dynamically links against `libstoolap`. For deployment, place the
 shared library next to your executable or in a system library path.
 
-### Other Platforms
+#### Other Platforms
 
 For platforms without a bundled library (e.g. Linux arm64, macOS x64), download from the
 [releases page](https://github.com/stoolap/stoolap-go/releases) or build from source,
@@ -35,7 +48,117 @@ export LIBRARY_PATH=/path/to/stoolap/target/release
 go build -tags stoolap_use_lib ./...
 ```
 
-## Quick Start
+## WASM Driver (Pure Go, Zero CGO)
+
+The WASM driver runs the Stoolap engine as a WebAssembly module inside your Go process
+using [wazero](https://wazero.io/). No CGO, no shared libraries, no platform-specific
+binaries. One 5 MB `.wasm` file works on every OS and architecture.
+
+### Installation
+
+```bash
+go get github.com/stoolap/stoolap-go/wasm
+```
+
+### Quick Start (WASM)
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+
+    "github.com/stoolap/stoolap-go/wasm"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // Load the WASM binary (5 MB, built from the Stoolap Rust engine)
+    wasmBytes, _ := os.ReadFile("stoolap.wasm")
+    engine, _ := wasm.NewEngine(ctx, wasmBytes)
+
+    db, _ := engine.OpenMemory(ctx)
+    defer db.Close()
+
+    db.Exec(ctx, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+    db.Exec(ctx, "INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+
+    rows, _ := db.Query(ctx, "SELECT id, name FROM users ORDER BY id")
+    defer rows.Close()
+
+    for rows.Next() {
+        var id int64
+        var name string
+        rows.Scan(&id, &name)
+        fmt.Printf("id=%d name=%s\n", id, name)
+    }
+}
+```
+
+### database/sql (WASM)
+
+```go
+import (
+    "context"
+    "database/sql"
+    "os"
+
+    "github.com/stoolap/stoolap-go/wasm"
+)
+
+func main() {
+    ctx := context.Background()
+    wasmBytes, _ := os.ReadFile("stoolap.wasm")
+    wasm.SetWASM(ctx, wasmBytes)
+
+    db, _ := sql.Open("stoolap-wasm", "memory://")
+    defer db.Close()
+    // Use standard database/sql API...
+}
+```
+
+### File Persistence (WASM)
+
+```go
+engine, _ := wasm.NewEngineWithFS(ctx, wasmBytes, "/path/to/data")
+db, _ := engine.Open(ctx, "file:///data/mydb")
+```
+
+**Note:** WASM does not support threads, so background maintenance tasks (MVCC cleanup,
+snapshots, volume freezing) do not run automatically. Use manual maintenance commands
+periodically:
+
+```go
+db.Exec(ctx, "VACUUM")              // Clean deleted rows, old versions, compact indexes
+db.Exec(ctx, "PRAGMA snapshot")     // Force a snapshot to disk
+db.Exec(ctx, "ANALYZE my_table")    // Update optimizer statistics
+```
+
+For production file-based workloads with automatic background maintenance, use the CGO driver.
+
+### Building the WASM Binary from Source
+
+Requires: Rust toolchain, `wasm32-wasip1` target, and [binaryen](https://github.com/WebAssembly/binaryen) (for `wasm-opt`).
+
+```bash
+# Install WASI target
+rustup target add wasm32-wasip1
+
+# Build (from the stoolap engine repo)
+cd stoolap
+cargo build --profile max --target wasm32-wasip1 --features ffi --no-default-features
+
+# Optimize (31 MB -> 5 MB)
+wasm-opt -Oz target/wasm32-wasip1/max/stoolap.wasm -o stoolap.wasm
+```
+
+A prebuilt `stoolap.wasm` is included in the module and available on the
+[releases page](https://github.com/stoolap/stoolap-go/releases).
+
+## Quick Start (CGO)
 
 ### Direct API
 
@@ -556,16 +679,23 @@ stoolap-go/
       stoolap.h           C header (copied from stoolap)
   pkg/
     driver/
-      driver.go           database/sql driver registration + Connector
+      driver.go           database/sql driver ("stoolap")
       conn.go             driver.Conn implementation
       stmt.go             driver.Stmt implementation
       rows.go             driver.Rows implementation
       transaction.go      driver.Tx implementation
       helpers.go          Value conversion helpers
       driver_test.go      database/sql integration tests
+  wasm/                   Pure Go WASM driver (separate Go module)
+    engine.go             WASM runtime, arena allocator, FFI wrappers
+    stoolap.go            Direct API (DB, Rows, Stmt, Tx)
+    driver.go             database/sql driver ("stoolap-wasm")
+    stoolap.wasm          Prebuilt WASM binary (5 MB)
+    stoolap_test.go       Tests (80%+ coverage)
+    go.mod
   example/
-    benchmark/
-      main.go             Stoolap vs SQLite benchmark harness
+    benchmark/            Stoolap CGO vs SQLite CGO benchmark
+    wasm_benchmark/       Stoolap WASM vs SQLite WASM benchmark
   go.mod
   LICENSE
   README.md
@@ -574,7 +704,11 @@ stoolap-go/
 ## Testing
 
 ```bash
+# CGO driver
 go test -v ./...
+
+# WASM driver
+cd wasm && go test -v ./...
 ```
 
 ## License

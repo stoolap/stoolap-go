@@ -2,3 +2,4 @@
 *.so binary
 *.dll binary
 *.dll.a binary
+*.wasm binary

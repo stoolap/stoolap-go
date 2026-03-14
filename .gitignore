@@ -1,5 +1,7 @@
 # Binaries
 *.exe
+example/benchmark/benchmark
+example/wasm_benchmark/wasm_benchmark
 
 # Shared libraries (local builds — lib/*/ are committed by CI)
 /*.dylib
