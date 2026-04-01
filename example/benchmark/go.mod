@@ -4,13 +4,13 @@ go 1.24
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.34
-	github.com/stoolap/stoolap-go v0.3.7
+	github.com/stoolap/stoolap-go v0.4.0
 )
 
 require (
-	github.com/stoolap/stoolap-go/lib/darwin_arm64 v0.3.7 // indirect
-	github.com/stoolap/stoolap-go/lib/linux_amd64 v0.3.7 // indirect
-	github.com/stoolap/stoolap-go/lib/windows_amd64 v0.3.7 // indirect
+	github.com/stoolap/stoolap-go/lib/darwin_arm64 v0.4.0 // indirect
+	github.com/stoolap/stoolap-go/lib/linux_amd64 v0.4.0 // indirect
+	github.com/stoolap/stoolap-go/lib/windows_amd64 v0.4.0 // indirect
 )
 
 replace (
