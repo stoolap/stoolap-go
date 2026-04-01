@@ -1,6 +1,6 @@
 # stoolap-go
 
-Go driver for [Stoolap](https://github.com/stoolap/stoolap), a high-performance embedded SQL database built in pure Rust with MVCC transactions, cost-based optimizer, time-travel queries, parallel execution, and native vector search.
+Go driver for [Stoolap](https://github.com/stoolap/stoolap), a high-performance embedded SQL database built in pure Rust with MVCC transactions, hot/cold columnar storage, cost-based optimizer, time-travel queries, parallel execution, and native vector search.
 
 Two driver implementations:
 
@@ -127,15 +127,18 @@ engine, _ := wasm.NewEngineWithFS(ctx, wasmBytes, "/path/to/data")
 db, _ := engine.Open(ctx, "file:///data/mydb")
 ```
 
-**Note:** WASM does not support threads, so background maintenance tasks (MVCC cleanup,
-snapshots, volume freezing) do not run automatically. Use manual maintenance commands
-periodically:
+**Note:** WASM does not support threads, so the automatic checkpoint cycle and background
+compaction do not run. Use manual maintenance commands periodically:
 
 ```go
+db.Exec(ctx, "PRAGMA checkpoint")   // Seal hot rows to cold volumes, persist manifests, truncate WAL
 db.Exec(ctx, "VACUUM")              // Clean deleted rows, old versions, compact indexes
-db.Exec(ctx, "PRAGMA snapshot")     // Force a snapshot to disk
+db.Exec(ctx, "PRAGMA snapshot")     // Create a backup snapshot for disaster recovery
 db.Exec(ctx, "ANALYZE my_table")    // Update optimizer statistics
 ```
+
+`PRAGMA checkpoint` is the most critical command for file-based WASM databases. Without it,
+data stays in the hot buffer and the WAL grows unbounded.
 
 For production file-based workloads with automatic background maintenance, use the CGO driver.
 
@@ -243,6 +246,19 @@ func main() {
 | `memory://mydb` | Named in-memory database (same name shares the engine) |
 | `file:///path/to/db` | File-based persistent database |
 | `file:///path/to/db?sync_mode=full` | File-based with configuration options |
+
+### File DSN Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `sync_mode` | `normal` | `none` (no fsync), `normal` (fsync every 1s), `full` (fsync every write) |
+| `checkpoint_interval` | `60` | Seconds between checkpoint cycles (seal + compact + WAL truncate) |
+| `compact_threshold` | `4` | Sub-target volumes per table before compaction merges them |
+| `target_volume_rows` | `1048576` | Target rows per cold volume (compaction split boundary) |
+| `checkpoint_on_close` | `on` | Seal all hot rows on clean shutdown for fast restart |
+| `compression` | `on` | LZ4 compression for both WAL and cold volumes |
+| `wal_compression` | `on` | LZ4 compression for WAL entries only |
+| `volume_compression` | `on` | LZ4 compression for cold volume files only |
 
 ## Direct API Reference
 

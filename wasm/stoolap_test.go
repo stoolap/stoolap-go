@@ -715,24 +715,46 @@ func TestFilePersistence(t *testing.T) {
 		t.Skip("file persistence not supported by this WASM build:", err)
 	}
 
-	db.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
-	db.Exec(ctx, "INSERT INTO t VALUES (1, 'hello'), (2, 'world')")
+	db.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, val FLOAT)")
+	db.Exec(ctx, "INSERT INTO t VALUES (1, 'hello', 3.14), (2, 'world', 2.71)")
+
+	// Checkpoint: seal hot rows to cold volumes, persist manifests, truncate WAL.
+	// Without this on WASM (no background threads), data stays in hot buffer + WAL only.
+	db.Exec(ctx, "PRAGMA checkpoint")
+
+	// Insert more after checkpoint to test WAL replay on reopen
+	db.Exec(ctx, "INSERT INTO t VALUES (3, 'after_checkpoint', 1.41)")
 	db.Close()
 
+	// Reopen and verify: rows 1-2 from cold volumes + row 3 from WAL replay
 	db2, err := engine.Open(ctx, "file:///data/testdb")
 	if err != nil {
 		t.Fatal("reopen:", err)
 	}
 	defer db2.Close()
-	rows, _ := db2.Query(ctx, "SELECT COUNT(*) FROM t")
+
+	rows, _ := db2.Query(ctx, "SELECT id, name, val FROM t ORDER BY id")
 	defer rows.Close()
-	rows.Next()
-	var count int64
-	rows.Scan(&count)
-	if count != 2 {
-		t.Fatalf("persistence failed: got %d rows", count)
+
+	type row struct {
+		id   int64
+		name string
+		val  float64
 	}
-	t.Log("File persistence works via WASI")
+	var results []row
+	for rows.Next() {
+		var r row
+		rows.Scan(&r.id, &r.name, &r.val)
+		results = append(results, r)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(results))
+	}
+	if results[0].name != "hello" || results[1].name != "world" || results[2].name != "after_checkpoint" {
+		t.Fatalf("unexpected data: %v", results)
+	}
+	t.Logf("File persistence works via WASI (volumes + WAL replay, %d rows)", len(results))
 }
 
 // ─── Error Paths ────────────────────────────────────────────────────────────
