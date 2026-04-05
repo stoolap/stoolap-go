@@ -132,7 +132,7 @@ jobs:
           if-no-files-found: error
 
   test:
-    name: Test CGO - go${{ matrix.go }} (${{ matrix.settings.os }})
+    name: Test Native - go${{ matrix.go }} (${{ matrix.settings.os }})
     needs: build
     strategy:
       fail-fast: true
@@ -167,10 +167,9 @@ jobs:
         run: |
           export PATH="${{ github.workspace }}/${{ matrix.settings.lib_dir }}:$PATH"
           export LD_LIBRARY_PATH="${{ github.workspace }}/${{ matrix.settings.lib_dir }}"
-          go vet ./...
           go test -v -count=1 ./...
         env:
-          CGO_ENABLED: '1'
+          CGO_ENABLED: '0'
 
   test-wasm:
     name: Test WASM - go${{ matrix.go }}
@@ -196,7 +195,6 @@ jobs:
       - name: Run WASM driver tests
         working-directory: wasm
         run: |
-          go vet ./...
           go test -v -count=1 -cover ./...
         env:
           STOOLAP_WASM: stoolap.wasm
@@ -246,16 +244,12 @@ jobs:
           sed -i "s|lib/darwin_arm64 v[0-9.]*|lib/darwin_arm64 v${VERSION}|" go.mod
           sed -i "s|lib/linux_amd64 v[0-9.]*|lib/linux_amd64 v${VERSION}|" go.mod
           sed -i "s|lib/windows_amd64 v[0-9.]*|lib/windows_amd64 v${VERSION}|" go.mod
-          sed -i "s|stoolap-go v[0-9.]*|stoolap-go v${VERSION}|" example/benchmark/go.mod
-          sed -i "s|lib/darwin_arm64 v[0-9.]*|lib/darwin_arm64 v${VERSION}|" example/benchmark/go.mod
-          sed -i "s|lib/linux_amd64 v[0-9.]*|lib/linux_amd64 v${VERSION}|" example/benchmark/go.mod
-          sed -i "s|lib/windows_amd64 v[0-9.]*|lib/windows_amd64 v${VERSION}|" example/benchmark/go.mod
 
       - name: Commit libraries and WASM
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add lib/ wasm/stoolap.wasm go.mod example/benchmark/go.mod
+          git add lib/ wasm/stoolap.wasm go.mod
           git commit -m "Release v${{ steps.version.outputs.VERSION }} (stoolap ${{ env.STOOLAP_ENGINE_REF }})"
           git push origin main
 

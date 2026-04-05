@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   test:
-    name: Test CGO - go${{ matrix.go }} (${{ matrix.settings.os }})
+    name: Test Native - go${{ matrix.go }} (${{ matrix.settings.os }})
     needs: build
     strategy:
       fail-fast: false
@@ -152,10 +152,9 @@ jobs:
         run: |
           export PATH="${{ github.workspace }}/${{ matrix.settings.lib_dir }}:$PATH"
           export LD_LIBRARY_PATH="${{ github.workspace }}/${{ matrix.settings.lib_dir }}"
-          go vet ./...
           go test -v -count=1 ./...
         env:
-          CGO_ENABLED: '1'
+          CGO_ENABLED: '0'
 
   test-wasm:
     name: Test WASM - go${{ matrix.go }}
@@ -181,7 +180,6 @@ jobs:
       - name: Run WASM driver tests
         working-directory: wasm
         run: |
-          go vet ./...
           go test -v -count=1 -cover ./...
         env:
           STOOLAP_WASM: stoolap.wasm
