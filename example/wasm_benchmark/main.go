@@ -301,9 +301,21 @@ func main() {
 			queryOne(ss, ids[i])
 			queryOne(ls, ids[i])
 		}
-		gu := benchUs(func() { for _, id := range ids { queryOne(gs, id) } }, 1) / float64(iterations)
-		su := benchUs(func() { for _, id := range ids { queryOne(ss, id) } }, 1) / float64(iterations)
-		lu := benchUs(func() { for _, id := range ids { queryOne(ls, id) } }, 1) / float64(iterations)
+		gu := benchUs(func() {
+			for _, id := range ids {
+				queryOne(gs, id)
+			}
+		}, 1) / float64(iterations)
+		su := benchUs(func() {
+			for _, id := range ids {
+				queryOne(ss, id)
+			}
+		}, 1) / float64(iterations)
+		lu := benchUs(func() {
+			for _, id := range ids {
+				queryOne(ls, id)
+			}
+		}, 1) / float64(iterations)
 		printRow("SELECT by ID", gu, su, lu)
 		gs.Close()
 		ss.Close()
@@ -324,9 +336,21 @@ func main() {
 			queryAll(ss, ages[i])
 			queryAll(ls, ages[i])
 		}
-		gu := benchUs(func() { for _, a := range ages { queryAll(gs, a) } }, 1) / float64(iterations)
-		su := benchUs(func() { for _, a := range ages { queryAll(ss, a) } }, 1) / float64(iterations)
-		lu := benchUs(func() { for _, a := range ages { queryAll(ls, a) } }, 1) / float64(iterations)
+		gu := benchUs(func() {
+			for _, a := range ages {
+				queryAll(gs, a)
+			}
+		}, 1) / float64(iterations)
+		su := benchUs(func() {
+			for _, a := range ages {
+				queryAll(ss, a)
+			}
+		}, 1) / float64(iterations)
+		lu := benchUs(func() {
+			for _, a := range ages {
+				queryAll(ls, a)
+			}
+		}, 1) / float64(iterations)
 		printRow("SELECT by index (exact)", gu, su, lu)
 		gs.Close()
 		ss.Close()
@@ -361,9 +385,21 @@ func main() {
 			ss.ExecContext(ctx, ps[i].b, ps[i].i)
 			ls.ExecContext(ctx, ps[i].b, ps[i].i)
 		}
-		gu := benchUs(func() { for _, p := range ps { gs.ExecContext(ctx, p.b, p.i) } }, 1) / float64(iterations)
-		su := benchUs(func() { for _, p := range ps { ss.ExecContext(ctx, p.b, p.i) } }, 1) / float64(iterations)
-		lu := benchUs(func() { for _, p := range ps { ls.ExecContext(ctx, p.b, p.i) } }, 1) / float64(iterations)
+		gu := benchUs(func() {
+			for _, p := range ps {
+				gs.ExecContext(ctx, p.b, p.i)
+			}
+		}, 1) / float64(iterations)
+		su := benchUs(func() {
+			for _, p := range ps {
+				ss.ExecContext(ctx, p.b, p.i)
+			}
+		}, 1) / float64(iterations)
+		lu := benchUs(func() {
+			for _, p := range ps {
+				ls.ExecContext(ctx, p.b, p.i)
+			}
+		}, 1) / float64(iterations)
 		printRow("UPDATE by ID", gu, su, lu)
 		gs.Close()
 		ss.Close()

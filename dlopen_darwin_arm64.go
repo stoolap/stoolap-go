@@ -1,3 +1,5 @@
+//go:build darwin && arm64
+
 /*
 Copyright 2025 Stoolap Contributors
 
@@ -13,8 +15,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-
-//go:build darwin && arm64
 
 package stoolap
 

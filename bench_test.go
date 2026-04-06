@@ -158,7 +158,7 @@ func BenchmarkDirectSelectByIndex(b *testing.B) {
 	i := 0
 
 	for b.Loop() {
-		args[0] = int64((i%62) + 18)
+		args[0] = int64((i % 62) + 18)
 		rows, _ := db.QueryParams(ctx, "SELECT * FROM users WHERE age = $1", args)
 		for rows.Next() {
 			var a1, a2, a3, a4, a5, a6, a7 any
@@ -378,7 +378,10 @@ func TestBenchmarkSummary(t *testing.T) {
 	iters := 200
 
 	dsn := "memory://benchsum" + strconv.FormatInt(testDBCounter.Add(1), 10)
-	db, _ := Open(dsn)
+	db, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 
 	db.Exec(ctx, `CREATE TABLE users (

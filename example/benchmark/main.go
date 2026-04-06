@@ -225,8 +225,16 @@ func main() {
 		queryOne(sSt, ids[i])
 		queryOne(lSt, ids[i])
 	}
-	sUs := benchUs(func() { for _, id := range ids { queryOne(sSt, id) } }, 1) / float64(iterations)
-	lUs := benchUs(func() { for _, id := range ids { queryOne(lSt, id) } }, 1) / float64(iterations)
+	sUs := benchUs(func() {
+		for _, id := range ids {
+			queryOne(sSt, id)
+		}
+	}, 1) / float64(iterations)
+	lUs := benchUs(func() {
+		for _, id := range ids {
+			queryOne(lSt, id)
+		}
+	}, 1) / float64(iterations)
 	printRow("SELECT by ID", sUs, lUs)
 	sSt.Close()
 	lSt.Close()
@@ -242,8 +250,16 @@ func main() {
 		queryAll(sSt, ages[i])
 		queryAll(lSt, ages[i])
 	}
-	sUs = benchUs(func() { for _, a := range ages { queryAll(sSt, a) } }, 1) / float64(iterations)
-	lUs = benchUs(func() { for _, a := range ages { queryAll(lSt, a) } }, 1) / float64(iterations)
+	sUs = benchUs(func() {
+		for _, a := range ages {
+			queryAll(sSt, a)
+		}
+	}, 1) / float64(iterations)
+	lUs = benchUs(func() {
+		for _, a := range ages {
+			queryAll(lSt, a)
+		}
+	}, 1) / float64(iterations)
 	printRow("SELECT by index (exact)", sUs, lUs)
 	sSt.Close()
 	lSt.Close()
@@ -305,8 +321,16 @@ func main() {
 		sSt.ExecContext(ctx, updateParams[i].balance, updateParams[i].id)
 		lSt.ExecContext(ctx, updateParams[i].balance, updateParams[i].id)
 	}
-	sUs = benchUs(func() { for _, p := range updateParams { sSt.ExecContext(ctx, p.balance, p.id) } }, 1) / float64(iterations)
-	lUs = benchUs(func() { for _, p := range updateParams { lSt.ExecContext(ctx, p.balance, p.id) } }, 1) / float64(iterations)
+	sUs = benchUs(func() {
+		for _, p := range updateParams {
+			sSt.ExecContext(ctx, p.balance, p.id)
+		}
+	}, 1) / float64(iterations)
+	lUs = benchUs(func() {
+		for _, p := range updateParams {
+			lSt.ExecContext(ctx, p.balance, p.id)
+		}
+	}, 1) / float64(iterations)
 	printRow("UPDATE by ID", sUs, lUs)
 	sSt.Close()
 	lSt.Close()
@@ -322,8 +346,16 @@ func main() {
 		sSt.ExecContext(ctx, balances[i], int64(27), int64(28))
 		lSt.ExecContext(ctx, balances[i], int64(27), int64(28))
 	}
-	sUs = benchUs(func() { for _, b := range balances { sSt.ExecContext(ctx, b, int64(27), int64(28)) } }, 1) / float64(iterations)
-	lUs = benchUs(func() { for _, b := range balances { lSt.ExecContext(ctx, b, int64(27), int64(28)) } }, 1) / float64(iterations)
+	sUs = benchUs(func() {
+		for _, b := range balances {
+			sSt.ExecContext(ctx, b, int64(27), int64(28))
+		}
+	}, 1) / float64(iterations)
+	lUs = benchUs(func() {
+		for _, b := range balances {
+			lSt.ExecContext(ctx, b, int64(27), int64(28))
+		}
+	}, 1) / float64(iterations)
 	printRow("UPDATE complex", sUs, lUs)
 	sSt.Close()
 	lSt.Close()

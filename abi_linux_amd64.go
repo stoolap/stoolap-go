@@ -1,4 +1,4 @@
-//go:build windows && amd64
+//go:build linux && amd64
 
 /*
 Copyright 2025 Stoolap Contributors
@@ -22,6 +22,15 @@ import (
 	"unsafe"
 	_ "unsafe"
 )
+
+// On Linux, runtime.asmcgocall zeroes the FS register on the g0 system stack.
+// Rust code needs FS for thread-local storage. runtime.cgocall preserves FS
+// via entersyscall/exitsyscall. With CGO_ENABLED=0, fakecgo (imported via
+// nocgo_linux_amd64.go) enables cgocall. With CGO_ENABLED=1, Go's native
+// cgo runtime enables it.
+//
+// We use the same assembly trampolines as darwin/amd64 but dispatch through
+// cgocall instead of asmcgocall.
 
 type abiCallFrame struct {
 	fn uintptr

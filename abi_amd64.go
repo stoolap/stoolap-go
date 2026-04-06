@@ -1,4 +1,4 @@
-//go:build (linux || darwin) && amd64
+//go:build darwin && amd64
 
 /*
 Copyright 2025 Stoolap Contributors

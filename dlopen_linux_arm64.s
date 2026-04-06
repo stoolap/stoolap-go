@@ -1,21 +1,14 @@
-//go:build linux && arm64
+//go:build linux && arm64 && !cgo
 
 #include "textflag.h"
 
-// Trampolines for dlopen/dlsym/dlerror from libdl.so.2.
-// Same pattern as Go's syscall package: JMP to the dynamic symbol.
+// Addressable stubs that jump to dynamically imported libdl symbols.
 
-TEXT libc_dlopen_trampoline<>(SB),NOSPLIT,$0-0
-	JMP libc_dlopen(SB)
-GLOBL ·libc_dlopen_trampoline_addr(SB), RODATA, $8
-DATA ·libc_dlopen_trampoline_addr(SB)/8, $libc_dlopen_trampoline<>(SB)
+TEXT libdl_dlopen(SB),NOSPLIT|NOFRAME,$0-0
+	JMP stoolap_dlopen_sym(SB)
 
-TEXT libc_dlsym_trampoline<>(SB),NOSPLIT,$0-0
-	JMP libc_dlsym(SB)
-GLOBL ·libc_dlsym_trampoline_addr(SB), RODATA, $8
-DATA ·libc_dlsym_trampoline_addr(SB)/8, $libc_dlsym_trampoline<>(SB)
+TEXT libdl_dlsym(SB),NOSPLIT|NOFRAME,$0-0
+	JMP stoolap_dlsym_sym(SB)
 
-TEXT libc_dlerror_trampoline<>(SB),NOSPLIT,$0-0
-	JMP libc_dlerror(SB)
-GLOBL ·libc_dlerror_trampoline_addr(SB), RODATA, $8
-DATA ·libc_dlerror_trampoline_addr(SB)/8, $libc_dlerror_trampoline<>(SB)
+TEXT libdl_dlerror(SB),NOSPLIT|NOFRAME,$0-0
+	JMP stoolap_dlerror_sym(SB)

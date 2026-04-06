@@ -50,7 +50,7 @@ const (
 	typeFloat     = 2
 	typeText      = 3
 	typeBoolean   = 4
-	typeTimestamp  = 5
+	typeTimestamp = 5
 	typeJSON      = 6
 	typeBlob      = 7
 )
@@ -227,7 +227,7 @@ func findLibrary() (string, error) {
 		return abs, nil
 	}
 
-	localLib := filepath.Join("..", "lib", subdir, libName)
+	localLib := filepath.Join("lib", subdir, libName)
 	if _, err := os.Stat(localLib); err == nil {
 		abs, _ := filepath.Abs(localLib)
 		return abs, nil
