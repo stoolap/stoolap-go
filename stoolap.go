@@ -239,6 +239,7 @@ type Rows struct {
 	colTypesLoaded bool
 	colTypesInline [inlineColTypesCap]int32
 	textBuf        []byte // reusable buffer for batching text copies in Scan
+	colNameBuf     []byte // reusable scratch for gathering column names in Columns
 }
 
 var rowsPool = sync.Pool{New: func() any { return &Rows{} }}
@@ -249,30 +250,51 @@ func newRows(ptr uintptr) *Rows {
 	return r
 }
 
-// Columns returns the column names.
-// Names are borrowed from C memory via unsafe.String — valid until Close().
+// Columns returns the column names as a Go-owned slice, safe to hold after Close().
+// First call per query: 2 allocations (one string for combined name data, one []string).
+// Subsequent calls on the same Rows return the cached slice with no allocation.
 func (r *Rows) Columns() []string {
-	if len(r.cols) == r.colCount {
+	if r.cols != nil {
 		return r.cols
 	}
-	if cap(r.cols) >= r.colCount {
-		r.cols = r.cols[:r.colCount]
+
+	// Inline scratch for per-column end offsets; fits the vast majority of tables.
+	var inlineEnds [32]int
+	var ends []int
+	if r.colCount <= len(inlineEnds) {
+		ends = inlineEnds[:r.colCount]
 	} else {
-		r.cols = make([]string, r.colCount)
+		ends = make([]int, r.colCount)
 	}
-	for i := range r.cols {
+
+	// Pass 1: gather all column-name bytes into a reusable scratch buffer,
+	// recording where each name ends.
+	buf := r.colNameBuf[:0]
+	for i := 0; i < r.colCount; i++ {
 		p := unsafe.Pointer(abiCall2(sym.rowsColName, r.ptr, uintptr(i)))
-		if p == nil {
-			r.cols[i] = ""
-			continue
+		if p != nil {
+			n := 0
+			for *(*byte)(unsafe.Add(p, n)) != 0 {
+				n++
+			}
+			if n > 0 {
+				buf = append(buf, unsafe.Slice((*byte)(p), n)...)
+			}
 		}
-		n := 0
-		for *(*byte)(unsafe.Add(p, n)) != 0 {
-			n++
-		}
-		r.cols[i] = unsafe.String((*byte)(p), n)
+		ends[i] = len(buf)
 	}
-	return r.cols
+	r.colNameBuf = buf
+
+	// One Go-owned allocation holding all the bytes.
+	all := string(buf)
+	cols := make([]string, r.colCount)
+	prev := 0
+	for i := 0; i < r.colCount; i++ {
+		cols[i] = all[prev:ends[i]]
+		prev = ends[i]
+	}
+	r.cols = cols
+	return cols
 }
 
 // IsNull reports whether the current row has a NULL value at column i.
@@ -522,8 +544,10 @@ func (r *Rows) Close() error {
 	r.closed = true
 	abiCallVoid1(sym.rowsClose, r.ptr)
 	r.ptr = 0
-	// Keep textBuf on the struct — it will be reused from the pool.
-	// string(textBuf) in Scan created independent copies, so this is safe.
+	// Release the columns slice so the next pooled use cannot share its
+	// backing array with a caller that is still holding a previous result.
+	// textBuf / colNameBuf stay — they hold no externally-visible data.
+	r.cols = nil
 	rowsPool.Put(r)
 	return nil
 }
@@ -680,12 +704,18 @@ func (tx *Tx) QueryParams(ctx context.Context, query string, args []any) (*Rows,
 }
 
 // Commit commits the transaction.
+// The underlying transaction handle is freed whether commit succeeds or fails,
+// so tx.ptr is always zeroed. On failure the error is retrieved from the
+// process-global error slot (the handle is no longer valid).
 func (tx *Tx) Commit() error {
-	rc := abiCall1(sym.txCommit, tx.ptr)
-	if int32(rc) != stoolapOK {
-		return errors.New(errStr(sym.txErrmsg, tx.ptr))
+	if tx.ptr == 0 {
+		return nil
 	}
+	rc := abiCall1(sym.txCommit, tx.ptr)
 	tx.ptr = 0
+	if int32(rc) != stoolapOK {
+		return errors.New(errStr(sym.errmsg, 0))
+	}
 	return nil
 }
 
