@@ -5,7 +5,6 @@ go 1.24.0
 require (
 	github.com/ncruces/go-sqlite3 v0.32.0
 	github.com/stoolap/stoolap-go/wasm v0.0.0
-	github.com/stoolap/stoolap-go/wasm2go v0.0.0
 )
 
 require (
@@ -14,7 +13,4 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 )
 
-replace (
-	github.com/stoolap/stoolap-go/wasm => ../../wasm
-	github.com/stoolap/stoolap-go/wasm2go => ../../wasm2go
-)
+replace github.com/stoolap/stoolap-go/wasm => ../../wasm
