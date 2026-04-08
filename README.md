@@ -1,5 +1,8 @@
 # stoolap-go
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/stoolap/stoolap-go)](https://goreportcard.com/report/github.com/stoolap/stoolap-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/stoolap/stoolap-go.svg)](https://pkg.go.dev/github.com/stoolap/stoolap-go)
+
 Go driver for [Stoolap](https://github.com/stoolap/stoolap), a high-performance embedded SQL database built in pure Rust with MVCC transactions, columnar storage, cost-based optimizer, time-travel queries, parallel execution, and native vector search.
 
 Two driver implementations:
