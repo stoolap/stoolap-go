@@ -18,6 +18,7 @@ package stoolap
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"sync/atomic"
@@ -1091,5 +1092,123 @@ func TestDatabaseSQLPreparedExec(t *testing.T) {
 	db.QueryRow("SELECT COUNT(*) FROM t").Scan(&count)
 	if count != 2 {
 		t.Fatalf("expected 2, got %d", count)
+	}
+}
+
+func TestErrorCodes(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	db.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT UNIQUE)")
+	db.ExecParams(ctx, "INSERT INTO t VALUES ($1, $2)", []any{int64(1), "alice@example.com"})
+
+	tests := []struct {
+		name    string
+		query   string
+		args    []any
+		code    ErrorCode
+		isConst bool
+	}{
+		{
+			name:    "primary key duplicate",
+			query:   "INSERT INTO t VALUES ($1, $2)",
+			args:    []any{int64(1), "bob@example.com"},
+			code:    ErrPrimaryKeyConstraint,
+			isConst: true,
+		},
+		{
+			name:    "unique constraint",
+			query:   "INSERT INTO t VALUES ($1, $2)",
+			args:    []any{int64(2), "alice@example.com"},
+			code:    ErrUniqueConstraint,
+			isConst: true,
+		},
+		{
+			name:    "table not found",
+			query:   "SELECT * FROM nonexistent",
+			args:    nil,
+			code:    ErrTableNotFound,
+			isConst: false,
+		},
+		{
+			name:    "table already exists",
+			query:   "CREATE TABLE t (x INTEGER)",
+			args:    nil,
+			code:    ErrTableExists,
+			isConst: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var err error
+			if len(tc.args) > 0 {
+				_, err = db.ExecParams(ctx, tc.query, tc.args)
+			} else if tc.code == ErrTableNotFound {
+				_, err = db.Query(ctx, tc.query)
+			} else {
+				_, err = db.Exec(ctx, tc.query)
+			}
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+
+			var stErr *Error
+			if !errors.As(err, &stErr) {
+				t.Fatalf("expected *stoolap.Error, got %T: %v", err, err)
+			}
+			if stErr.Code() != tc.code {
+				t.Errorf("expected code %d, got %d; msg: %s", tc.code, stErr.Code(), stErr.Error())
+			}
+			if tc.isConst && !stErr.IsConstraintViolation() {
+				t.Error("expected IsConstraintViolation() == true")
+			}
+		})
+	}
+}
+
+func TestClosedDBReturnsError(t *testing.T) {
+	db := openTestDB(t)
+	db.Close()
+	ctx := context.Background()
+
+	if _, err := db.Exec(ctx, "SELECT 1"); err != errDBClosed {
+		t.Errorf("Exec on closed DB: got %v, want errDBClosed", err)
+	}
+	if _, err := db.Query(ctx, "SELECT 1"); err != errDBClosed {
+		t.Errorf("Query on closed DB: got %v, want errDBClosed", err)
+	}
+	if _, err := db.Prepare(ctx, "SELECT 1"); err != errDBClosed {
+		t.Errorf("Prepare on closed DB: got %v, want errDBClosed", err)
+	}
+	if _, err := db.Begin(ctx); err != errDBClosed {
+		t.Errorf("Begin on closed DB: got %v, want errDBClosed", err)
+	}
+	if _, err := db.Clone(); err != errDBClosed {
+		t.Errorf("Clone on closed DB: got %v, want errDBClosed", err)
+	}
+}
+
+func TestCommittedTxReturnsError(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	db.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY)")
+
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tx.Exec(ctx, "INSERT INTO t VALUES (1)"); err != errTxDone {
+		t.Errorf("Exec on committed tx: got %v, want errTxDone", err)
+	}
+	if _, err := tx.Query(ctx, "SELECT 1"); err != errTxDone {
+		t.Errorf("Query on committed tx: got %v, want errTxDone", err)
 	}
 }

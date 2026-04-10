@@ -22,15 +22,95 @@ import (
 	"errors"
 	"math"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
 )
 
+var errDBClosed = errors.New("stoolap: database is closed")
 var errRowsClosed = errors.New("stoolap: rows are closed")
 var errStmtClosed = errors.New("stoolap: statement is closed")
+var errTxDone = errors.New("stoolap: transaction has already been committed or rolled back")
 var errColumnCount = errors.New("stoolap: scan destination count does not match column count")
 var errUnsupportedDest = errors.New("stoolap: unsupported scan destination type")
+
+// ErrorCode categorizes stoolap engine errors.
+type ErrorCode int
+
+const (
+	// ErrGeneral is the default code for uncategorized errors.
+	ErrGeneral ErrorCode = iota
+	// ErrUniqueConstraint indicates a unique index constraint violation.
+	ErrUniqueConstraint
+	// ErrPrimaryKeyConstraint indicates a primary key constraint violation.
+	ErrPrimaryKeyConstraint
+	// ErrNotNullConstraint indicates a NOT NULL constraint violation.
+	ErrNotNullConstraint
+	// ErrCheckConstraint indicates a CHECK constraint violation.
+	ErrCheckConstraint
+	// ErrForeignKeyViolation indicates a foreign key constraint violation.
+	ErrForeignKeyViolation
+	// ErrTableNotFound indicates the referenced table does not exist.
+	ErrTableNotFound
+	// ErrTableExists indicates the table already exists.
+	ErrTableExists
+)
+
+// Error is a stoolap engine error with a categorized error code.
+// Use errors.As to extract it:
+//
+//	var stErr *stoolap.Error
+//	if errors.As(err, &stErr) {
+//	    switch stErr.Code() {
+//	    case stoolap.ErrUniqueConstraint:
+//	        // handle duplicate
+//	    }
+//	}
+type Error struct {
+	msg  string
+	code ErrorCode
+}
+
+func (e *Error) Error() string   { return e.msg }
+func (e *Error) Code() ErrorCode { return e.code }
+
+// IsConstraintViolation reports whether the error is any kind of constraint violation
+// (unique, primary key, not null, check, or foreign key).
+func (e *Error) IsConstraintViolation() bool {
+	return e.code >= ErrUniqueConstraint && e.code <= ErrForeignKeyViolation
+}
+
+func newError(msg string) error {
+	return &Error{msg: msg, code: classifyError(msg)}
+}
+
+func classifyError(msg string) ErrorCode {
+	if strings.HasPrefix(msg, "unique constraint failed") {
+		return ErrUniqueConstraint
+	}
+	if strings.HasPrefix(msg, "primary key constraint failed") {
+		return ErrPrimaryKeyConstraint
+	}
+	if strings.HasPrefix(msg, "not null constraint failed") {
+		return ErrNotNullConstraint
+	}
+	if strings.HasPrefix(msg, "CHECK constraint failed") {
+		return ErrCheckConstraint
+	}
+	if strings.HasPrefix(msg, "foreign key constraint violation") {
+		return ErrForeignKeyViolation
+	}
+	if strings.HasPrefix(msg, "table '") || strings.HasPrefix(msg, "table or view '") {
+		if strings.Contains(msg, "not found") {
+			return ErrTableNotFound
+		}
+		if strings.Contains(msg, "already exists") {
+			return ErrTableExists
+		}
+	}
+	return ErrGeneral
+}
 
 const inlineColTypesCap = 8
 
@@ -62,7 +142,7 @@ func Open(dsn string) (*DB, error) {
 	rc := abiCall2(sym.open, cs.ptr, uintptr(unsafe.Pointer(&dbPtr)))
 	cs.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.errmsg, 0))
+		return nil, newError(errStr(sym.errmsg, 0))
 	}
 	return &DB{ptr: dbPtr}, nil
 }
@@ -75,7 +155,7 @@ func OpenMemory() (*DB, error) {
 	var dbPtr uintptr
 	rc := abiCall1(sym.openInMemory, uintptr(unsafe.Pointer(&dbPtr)))
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.errmsg, 0))
+		return nil, newError(errStr(sym.errmsg, 0))
 	}
 	return &DB{ptr: dbPtr}, nil
 }
@@ -92,16 +172,22 @@ func (db *DB) Close() error {
 
 // Clone creates a cloned handle for concurrent use.
 func (db *DB) Clone() (*DB, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	var clonePtr uintptr
 	rc := abiCall2(sym.clone, db.ptr, uintptr(unsafe.Pointer(&clonePtr)))
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.errmsg, db.ptr))
+		return nil, newError(errStr(sym.errmsg, db.ptr))
 	}
 	return &DB{ptr: clonePtr}, nil
 }
 
 // Exec executes a SQL statement.
 func (db *DB) Exec(ctx context.Context, query string) (sql.Result, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -110,13 +196,16 @@ func (db *DB) Exec(ctx context.Context, query string) (sql.Result, error) {
 	rc := abiCall3(sym.exec, db.ptr, cs.ptr, uintptr(unsafe.Pointer(&affected)))
 	cs.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.errmsg, db.ptr))
+		return nil, newError(errStr(sym.errmsg, db.ptr))
 	}
 	return execResult(affected), nil
 }
 
 // ExecParams executes a SQL statement with positional parameters.
 func (db *DB) ExecParams(ctx context.Context, query string, args []any) (sql.Result, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -133,13 +222,16 @@ func (db *DB) ExecParams(ctx context.Context, query string, args []any) (sql.Res
 	cs.keepAlive()
 	ep.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.errmsg, db.ptr))
+		return nil, newError(errStr(sym.errmsg, db.ptr))
 	}
 	return execResult(affected), nil
 }
 
 // Query executes a query that returns rows.
 func (db *DB) Query(ctx context.Context, query string) (*Rows, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -148,13 +240,16 @@ func (db *DB) Query(ctx context.Context, query string) (*Rows, error) {
 	rc := abiCall3(sym.query, db.ptr, cs.ptr, uintptr(unsafe.Pointer(&rowsPtr)))
 	cs.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.errmsg, db.ptr))
+		return nil, newError(errStr(sym.errmsg, db.ptr))
 	}
 	return newRows(rowsPtr), nil
 }
 
 // QueryParams executes a query with positional parameters.
 func (db *DB) QueryParams(ctx context.Context, query string, args []any) (*Rows, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -171,13 +266,16 @@ func (db *DB) QueryParams(ctx context.Context, query string, args []any) (*Rows,
 	cs.keepAlive()
 	ep.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.errmsg, db.ptr))
+		return nil, newError(errStr(sym.errmsg, db.ptr))
 	}
 	return newRows(rowsPtr), nil
 }
 
 // Prepare creates a prepared statement.
 func (db *DB) Prepare(ctx context.Context, query string) (*Stmt, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -186,26 +284,32 @@ func (db *DB) Prepare(ctx context.Context, query string) (*Stmt, error) {
 	rc := abiCall3(sym.prepare, db.ptr, cs.ptr, uintptr(unsafe.Pointer(&stmtPtr)))
 	cs.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.errmsg, db.ptr))
+		return nil, newError(errStr(sym.errmsg, db.ptr))
 	}
 	return &Stmt{ptr: stmtPtr}, nil
 }
 
 // Begin starts a transaction.
 func (db *DB) Begin(ctx context.Context) (*Tx, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	var txPtr uintptr
 	rc := abiCall2(sym.begin, db.ptr, uintptr(unsafe.Pointer(&txPtr)))
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.errmsg, db.ptr))
+		return nil, newError(errStr(sym.errmsg, db.ptr))
 	}
 	return &Tx{ptr: txPtr}, nil
 }
 
 // BeginTx starts a transaction with options.
 func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -222,7 +326,7 @@ func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
 	var txPtr uintptr
 	rc := abiCall3(sym.beginIso, db.ptr, uintptr(isolation), uintptr(unsafe.Pointer(&txPtr)))
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.errmsg, db.ptr))
+		return nil, newError(errStr(sym.errmsg, db.ptr))
 	}
 	return &Tx{ptr: txPtr}, nil
 }
@@ -579,7 +683,7 @@ func (s *Stmt) ExecContext(ctx context.Context, args []any) (sql.Result, error) 
 	rc := abiCall4(sym.stmtExec, s.ptr, ep.ptr, uintptr(int32(len(args))), uintptr(unsafe.Pointer(&affected)))
 	ep.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.stmtErrmsg, s.ptr))
+		return nil, newError(errStr(sym.stmtErrmsg, s.ptr))
 	}
 	return execResult(affected), nil
 }
@@ -602,7 +706,7 @@ func (s *Stmt) QueryContext(ctx context.Context, args []any) (*Rows, error) {
 	rc := abiCall4(sym.stmtQuery, s.ptr, ep.ptr, uintptr(int32(len(args))), uintptr(unsafe.Pointer(&rowsPtr)))
 	ep.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.stmtErrmsg, s.ptr))
+		return nil, newError(errStr(sym.stmtErrmsg, s.ptr))
 	}
 	return newRows(rowsPtr), nil
 }
@@ -629,6 +733,9 @@ type Tx struct {
 
 // Exec executes within the transaction.
 func (tx *Tx) Exec(ctx context.Context, query string) (sql.Result, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -637,13 +744,16 @@ func (tx *Tx) Exec(ctx context.Context, query string) (sql.Result, error) {
 	rc := abiCall3(sym.txExec, tx.ptr, cs.ptr, uintptr(unsafe.Pointer(&affected)))
 	cs.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.txErrmsg, tx.ptr))
+		return nil, newError(errStr(sym.txErrmsg, tx.ptr))
 	}
 	return execResult(affected), nil
 }
 
 // ExecParams executes with parameters within the transaction.
 func (tx *Tx) ExecParams(ctx context.Context, query string, args []any) (sql.Result, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -660,13 +770,16 @@ func (tx *Tx) ExecParams(ctx context.Context, query string, args []any) (sql.Res
 	cs.keepAlive()
 	ep.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.txErrmsg, tx.ptr))
+		return nil, newError(errStr(sym.txErrmsg, tx.ptr))
 	}
 	return execResult(affected), nil
 }
 
 // Query within the transaction.
 func (tx *Tx) Query(ctx context.Context, query string) (*Rows, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -675,13 +788,16 @@ func (tx *Tx) Query(ctx context.Context, query string) (*Rows, error) {
 	rc := abiCall3(sym.txQuery, tx.ptr, cs.ptr, uintptr(unsafe.Pointer(&rowsPtr)))
 	cs.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.txErrmsg, tx.ptr))
+		return nil, newError(errStr(sym.txErrmsg, tx.ptr))
 	}
 	return newRows(rowsPtr), nil
 }
 
 // QueryParams executes a query with parameters within the transaction.
 func (tx *Tx) QueryParams(ctx context.Context, query string, args []any) (*Rows, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -698,7 +814,7 @@ func (tx *Tx) QueryParams(ctx context.Context, query string, args []any) (*Rows,
 	cs.keepAlive()
 	ep.keepAlive()
 	if int32(rc) != stoolapOK {
-		return nil, errors.New(errStr(sym.txErrmsg, tx.ptr))
+		return nil, newError(errStr(sym.txErrmsg, tx.ptr))
 	}
 	return newRows(rowsPtr), nil
 }
@@ -714,7 +830,7 @@ func (tx *Tx) Commit() error {
 	rc := abiCall1(sym.txCommit, tx.ptr)
 	tx.ptr = 0
 	if int32(rc) != stoolapOK {
-		return errors.New(errStr(sym.errmsg, 0))
+		return newError(errStr(sym.errmsg, 0))
 	}
 	return nil
 }

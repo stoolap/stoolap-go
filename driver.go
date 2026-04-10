@@ -131,6 +131,10 @@ func (c *driverConn) Close() error {
 		return nil
 	}
 	c.closed = true
+	if c.tx != nil {
+		c.tx.Rollback()
+		c.tx = nil
+	}
 	return c.db.Close()
 }
 
@@ -214,7 +218,10 @@ func (c *driverConn) ResetSession(ctx context.Context) error {
 	if c.closed {
 		return driver.ErrBadConn
 	}
-	c.tx = nil
+	if c.tx != nil {
+		c.tx.Rollback()
+		c.tx = nil
+	}
 	return nil
 }
 
