@@ -1,5 +1,3 @@
-//go:build windows && amd64
-
 /*
 Copyright 2025 Stoolap Contributors
 
@@ -16,9 +14,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package stoolaplib carries the prebuilt libstoolap.dylib for darwin/arm64.
+// Importing it makes the Go tool download this module, and Dir tells the
+// driver where the library file lives.
 package stoolaplib
 
-/*
-#cgo LDFLAGS: -L${SRCDIR} -l:stoolap.dll -lws2_32 -lbcrypt -luserenv -lntdll -ladvapi32 -lkernel32
-*/
-import "C"
+import (
+	"path/filepath"
+	"runtime"
+)
+
+// Dir is the directory holding libstoolap.dylib. It is empty when the build
+// used -trimpath, in which case the driver searches the module cache instead.
+var Dir string
+
+func init() {
+	if _, file, _, ok := runtime.Caller(0); ok && filepath.IsAbs(file) {
+		Dir = filepath.Dir(file)
+	}
+}

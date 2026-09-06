@@ -1,4 +1,4 @@
-//go:build darwin && arm64
+//go:build linux && amd64
 
 /*
 Copyright 2025 Stoolap Contributors
@@ -16,9 +16,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package stoolaplib
+package stoolap
 
-/*
-#cgo LDFLAGS: -L${SRCDIR} -lstoolap -Wl,-rpath,${SRCDIR} -liconv -framework CoreFoundation -lm
-*/
-import "C"
+import stoolaplib "github.com/stoolap/stoolap-go/lib/linux_amd64"
+
+func init() { bundledLibDir = stoolaplib.Dir }

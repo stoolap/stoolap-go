@@ -1,4 +1,4 @@
-//go:build linux && amd64
+//go:build windows && amd64
 
 /*
 Copyright 2025 Stoolap Contributors
@@ -16,9 +16,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package stoolaplib
+package stoolap
 
-/*
-#cgo LDFLAGS: -L${SRCDIR} -lstoolap -Wl,-rpath,${SRCDIR} -ldl -lpthread -lgcc_s -lrt -lm
-*/
-import "C"
+import stoolaplib "github.com/stoolap/stoolap-go/lib/windows_amd64"
+
+func init() { bundledLibDir = stoolaplib.Dir }

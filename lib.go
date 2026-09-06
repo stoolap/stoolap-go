@@ -123,6 +123,9 @@ var sym struct {
 var libOnce sync.Once
 var libErr error
 
+// bundledLibDir is set by the bundled_* files from the imported lib module.
+var bundledLibDir string
+
 const maxPooledCStringCap = 4 << 10
 
 var cStrPool = sync.Pool{
@@ -243,15 +246,25 @@ func findLibrary() (string, error) {
 		return abs, nil
 	}
 
-	home, _ := os.UserHomeDir()
-	patterns := []string{
-		filepath.Join(home, "go", "pkg", "mod", "github.com", "stoolap", "stoolap-go", "lib", subdir+"@*", libName),
-	}
-	for _, pattern := range patterns {
-		matches, _ := filepath.Glob(pattern)
-		if len(matches) > 0 {
-			return matches[len(matches)-1], nil
+	if bundledLibDir != "" {
+		p := filepath.Join(bundledLibDir, libName)
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
 		}
+	}
+
+	modCache := os.Getenv("GOMODCACHE")
+	if modCache == "" {
+		if gopath := os.Getenv("GOPATH"); gopath != "" {
+			modCache = filepath.Join(gopath, "pkg", "mod")
+		} else {
+			home, _ := os.UserHomeDir()
+			modCache = filepath.Join(home, "go", "pkg", "mod")
+		}
+	}
+	pattern := filepath.Join(modCache, "github.com", "stoolap", "stoolap-go", "lib", subdir+"@*", libName)
+	if matches, _ := filepath.Glob(pattern); len(matches) > 0 {
+		return matches[len(matches)-1], nil
 	}
 
 	return "", errors.New("library not found — set STOOLAP_LIB or place " + libName + " in current directory")
