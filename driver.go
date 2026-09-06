@@ -162,6 +162,16 @@ func (c *driverConn) ExecContext(ctx context.Context, query string, args []drive
 	if c.closed {
 		return nil, driver.ErrBadConn
 	}
+	if hasNamed(args) {
+		named, err := toNamedArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		if c.tx != nil {
+			return c.tx.ExecNamed(ctx, query, named)
+		}
+		return c.db.ExecNamed(ctx, query, named)
+	}
 	goArgs := namedToAny(args)
 
 	if c.tx != nil {
@@ -184,7 +194,18 @@ func (c *driverConn) QueryContext(ctx context.Context, query string, args []driv
 
 	var r *Rows
 	var err error
-	if c.tx != nil {
+	if hasNamed(args) {
+		var named []sql.NamedArg
+		named, err = toNamedArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		if c.tx != nil {
+			r, err = c.tx.QueryNamed(ctx, query, named)
+		} else {
+			r, err = c.db.QueryNamed(ctx, query, named)
+		}
+	} else if c.tx != nil {
 		if len(goArgs) == 0 {
 			r, err = c.tx.Query(ctx, query)
 		} else {
@@ -276,10 +297,16 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 }
 
 func (s *driverStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	if hasNamed(args) {
+		return nil, errNamedStmtUnsupported
+	}
 	return s.stmt.ExecContext(ctx, namedToAny(args))
 }
 
 func (s *driverStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	if hasNamed(args) {
+		return nil, errNamedStmtUnsupported
+	}
 	r, err := s.stmt.QueryContext(ctx, namedToAny(args))
 	if err != nil {
 		return nil, err
@@ -350,6 +377,30 @@ func (r *driverRows) Next(dest []driver.Value) error {
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
+
+var errMixedArgs = errors.New("stoolap: cannot mix named and positional arguments")
+var errNamedStmtUnsupported = errors.New("stoolap: named arguments are not supported on prepared statements")
+
+func hasNamed(args []driver.NamedValue) bool {
+	for i := range args {
+		if args[i].Name != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// toNamedArgs converts database/sql named values. Every argument must carry a name.
+func toNamedArgs(args []driver.NamedValue) ([]sql.NamedArg, error) {
+	out := make([]sql.NamedArg, len(args))
+	for i, a := range args {
+		if a.Name == "" {
+			return nil, errMixedArgs
+		}
+		out[i] = sql.NamedArg{Name: a.Name, Value: a.Value}
+	}
+	return out, nil
+}
 
 func namedToAny(args []driver.NamedValue) []any {
 	if len(args) == 0 {

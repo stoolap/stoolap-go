@@ -74,23 +74,28 @@ var sym struct {
 	errmsg       uintptr
 	exec         uintptr
 	execParams   uintptr
+	execNamed    uintptr
 	query        uintptr
 	queryParams  uintptr
+	queryNamed   uintptr
 	prepare      uintptr
 	begin        uintptr
 	beginIso     uintptr
 
 	// Stmt
-	stmtExec     uintptr
-	stmtQuery    uintptr
-	stmtFinalize uintptr
-	stmtErrmsg   uintptr
+	stmtExec      uintptr
+	stmtExecBatch uintptr
+	stmtQuery     uintptr
+	stmtFinalize  uintptr
+	stmtErrmsg    uintptr
 
 	// Tx
 	txExec        uintptr
 	txExecParams  uintptr
+	txExecNamed   uintptr
 	txQuery       uintptr
 	txQueryParams uintptr
+	txQueryNamed  uintptr
 	txCommit      uintptr
 	txRollback    uintptr
 	txErrmsg      uintptr
@@ -158,19 +163,24 @@ func loadLibrary() error {
 		sym.errmsg = must("stoolap_errmsg")
 		sym.exec = must("stoolap_exec")
 		sym.execParams = must("stoolap_exec_params")
+		sym.execNamed = must("stoolap_exec_named")
 		sym.query = must("stoolap_query")
 		sym.queryParams = must("stoolap_query_params")
+		sym.queryNamed = must("stoolap_query_named")
 		sym.prepare = must("stoolap_prepare")
 		sym.begin = must("stoolap_begin")
 		sym.beginIso = must("stoolap_begin_with_isolation")
 		sym.stmtExec = must("stoolap_stmt_exec")
+		sym.stmtExecBatch = must("stoolap_stmt_exec_batch")
 		sym.stmtQuery = must("stoolap_stmt_query")
 		sym.stmtFinalize = must("stoolap_stmt_finalize")
 		sym.stmtErrmsg = must("stoolap_stmt_errmsg")
 		sym.txExec = must("stoolap_tx_exec")
 		sym.txExecParams = must("stoolap_tx_exec_params")
+		sym.txExecNamed = must("stoolap_tx_exec_named")
 		sym.txQuery = must("stoolap_tx_query")
 		sym.txQueryParams = must("stoolap_tx_query_params")
+		sym.txQueryNamed = must("stoolap_tx_query_named")
 		sym.txCommit = must("stoolap_tx_commit")
 		sym.txRollback = must("stoolap_tx_rollback")
 		sym.txErrmsg = must("stoolap_tx_errmsg")

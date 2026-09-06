@@ -3,7 +3,7 @@
 #include "textflag.h"
 
 // abiCallTrampoline is entered via runtime.asmcgocall on g0.
-// R0 points at abiCallFrame; we marshal up to 5 integer/pointer args into the
+// R0 points at abiCallFrame; we marshal up to 6 integer/pointer args into the
 // platform ABI registers, call the foreign function, and store the integer
 // return value back into frame.r1.
 
@@ -22,10 +22,11 @@ TEXT abiCallTrampoline(SB), NOSPLIT, $16
 	MOVD 24(R19), R2
 	MOVD 32(R19), R3
 	MOVD 40(R19), R4
+	MOVD 48(R19), R5
 	BL   (R12)
 
 	MOVD R20, RSP
-	MOVD R0, 48(R19)
+	MOVD R0, 56(R19)
 	LDP  16(RSP), (R19, R20)
 	RET
 

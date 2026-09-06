@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 env:
-  STOOLAP_ENGINE_REF: v0.4.0
+  STOOLAP_ENGINE_REF: v0.4.1
 
 jobs:
   build:

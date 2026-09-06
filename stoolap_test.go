@@ -1212,3 +1212,265 @@ func TestCommittedTxReturnsError(t *testing.T) {
 		t.Errorf("Query on committed tx: got %v, want errTxDone", err)
 	}
 }
+
+func TestPreparedExecBatch(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	if _, err := db.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, score FLOAT)"); err != nil {
+		t.Fatal(err)
+	}
+
+	stmt, err := db.Prepare(ctx, "INSERT INTO t VALUES ($1, $2, $3)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+
+	// Empty batch is a no-op
+	res, err := stmt.ExecBatch(ctx, nil)
+	if err != nil {
+		t.Fatal("empty batch:", err)
+	}
+	if n, _ := res.RowsAffected(); n != 0 {
+		t.Fatalf("expected 0 affected, got %d", n)
+	}
+
+	rows := [][]any{
+		{int64(1), "alice", 95.5},
+		{int64(2), "bob", 88.0},
+		{int64(3), "", nil},
+	}
+	res, err = stmt.ExecBatch(ctx, rows)
+	if err != nil {
+		t.Fatal("batch:", err)
+	}
+	if n, _ := res.RowsAffected(); n != 3 {
+		t.Fatalf("expected 3 affected, got %d", n)
+	}
+
+	countRows := func() int64 {
+		r, err := db.Query(ctx, "SELECT COUNT(*) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		r.Next()
+		var n int64
+		r.Scan(&n)
+		return n
+	}
+	if n := countRows(); n != 3 {
+		t.Fatalf("expected 3 rows, got %d", n)
+	}
+	r, err := db.Query(ctx, "SELECT name, score FROM t ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for r.Next() {
+		var name string
+		var score any
+		if err := r.Scan(&name, &score); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%s|%v", name, score))
+	}
+	r.Close()
+	want := []string{"alice|95.5", "bob|88", "|<nil>"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+
+	// Ragged rows are rejected before touching the engine
+	_, err = stmt.ExecBatch(ctx, [][]any{{int64(4), "x", 1.0}, {int64(5)}})
+	if !errors.Is(err, errBatchRowLength) {
+		t.Fatalf("expected errBatchRowLength, got %v", err)
+	}
+
+	// A failing row rolls back the whole batch
+	_, err = stmt.ExecBatch(ctx, [][]any{
+		{int64(10), "ten", 1.0},
+		{int64(1), "dup", 1.0},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate key error")
+	}
+	if n := countRows(); n != 3 {
+		t.Fatalf("expected rollback to keep 3 rows, got %d", n)
+	}
+
+	// Scratch buffers are reused across batches of different sizes
+	big := make([][]any, 200)
+	for i := range big {
+		big[i] = []any{int64(100 + i), "user" + string(rune('a'+i%26)), float64(i)}
+	}
+	res, err = stmt.ExecBatch(ctx, big)
+	if err != nil {
+		t.Fatal("big batch:", err)
+	}
+	if n, _ := res.RowsAffected(); n != 200 {
+		t.Fatalf("expected 200 affected, got %d", n)
+	}
+
+	// Statements without parameters run once per row
+	noParam, err := db.Prepare(ctx, "DELETE FROM t WHERE id = (SELECT MAX(id) FROM t)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer noParam.Close()
+	res, err = noParam.ExecBatch(ctx, [][]any{{}, {}})
+	if err != nil {
+		t.Fatal("no-param batch:", err)
+	}
+	if n, _ := res.RowsAffected(); n != 2 {
+		t.Fatalf("expected 2 affected, got %d", n)
+	}
+
+	stmt.Close()
+	if _, err := stmt.ExecBatch(ctx, rows); !errors.Is(err, errStmtClosed) {
+		t.Fatalf("expected errStmtClosed, got %v", err)
+	}
+}
+
+func TestNamedParams(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	if _, err := db.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, score FLOAT, active BOOLEAN)"); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := db.ExecNamed(ctx, "INSERT INTO t VALUES (:id, :name, :score, :active)", []sql.NamedArg{
+		sql.Named("id", int64(1)),
+		sql.Named("name", "alice"),
+		sql.Named("score", 95.5),
+		sql.Named("active", true),
+	})
+	if err != nil {
+		t.Fatal("exec named:", err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		t.Fatalf("expected 1 affected, got %d", n)
+	}
+
+	// Same name used twice, plus a NULL
+	_, err = db.ExecNamed(ctx, "INSERT INTO t VALUES (:id, :name, :id, :flag)", []sql.NamedArg{
+		sql.Named("id", int64(2)),
+		sql.Named("name", "bob"),
+		sql.Named("flag", nil),
+	})
+	if err != nil {
+		t.Fatal("exec named reuse:", err)
+	}
+
+	rows, err := db.QueryNamed(ctx, "SELECT name, score FROM t WHERE score > :min ORDER BY id", []sql.NamedArg{sql.Named("min", 50.0)})
+	if err != nil {
+		t.Fatal("query named:", err)
+	}
+	var got []string
+	for rows.Next() {
+		var name string
+		var score float64
+		if err := rows.Scan(&name, &score); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%s|%v", name, score))
+	}
+	rows.Close()
+	if fmt.Sprint(got) != "[alice|95.5]" {
+		t.Fatalf("got %v", got)
+	}
+
+	// Transaction path
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecNamed(ctx, "UPDATE t SET name = :n WHERE id = :id", []sql.NamedArg{sql.Named("n", "carol"), sql.Named("id", int64(2))}); err != nil {
+		t.Fatal("tx exec named:", err)
+	}
+	r2, err := tx.QueryNamed(ctx, "SELECT name FROM t WHERE id = :id", []sql.NamedArg{sql.Named("id", int64(2))})
+	if err != nil {
+		t.Fatal("tx query named:", err)
+	}
+	var name string
+	r2.Next()
+	r2.Scan(&name)
+	r2.Close()
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if name != "carol" {
+		t.Fatalf("expected carol, got %q", name)
+	}
+
+	// Empty name rejected before the engine sees it
+	if _, err := db.ExecNamed(ctx, "SELECT :x", []sql.NamedArg{{Value: 1}}); !errors.Is(err, errEmptyParamName) {
+		t.Fatalf("expected errEmptyParamName, got %v", err)
+	}
+	// Empty args fall back to plain exec
+	if _, err := db.ExecNamed(ctx, "DELETE FROM t WHERE id = 99", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDatabaseSQLNamedArgs(t *testing.T) {
+	db, err := sql.Open("stoolap", fmt.Sprintf("memory://sqlnamed%d", testDBCounter.Add(1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+
+	if _, err := db.ExecContext(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO t VALUES (:id, :name)", sql.Named("id", 1), sql.Named("name", "alice")); err != nil {
+		t.Fatal("exec:", err)
+	}
+
+	var name string
+	if err := db.QueryRowContext(ctx, "SELECT name FROM t WHERE id = :id", sql.Named("id", 1)).Scan(&name); err != nil {
+		t.Fatal("query:", err)
+	}
+	if name != "alice" {
+		t.Fatalf("expected alice, got %q", name)
+	}
+
+	// Inside a database/sql transaction
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO t VALUES (:id, :name)", sql.Named("id", 2), sql.Named("name", "bob")); err != nil {
+		t.Fatal("tx exec:", err)
+	}
+	if err := tx.QueryRowContext(ctx, "SELECT name FROM t WHERE id = :id", sql.Named("id", 2)).Scan(&name); err != nil {
+		t.Fatal("tx query:", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if name != "bob" {
+		t.Fatalf("expected bob, got %q", name)
+	}
+
+	// Mixing named and positional is rejected
+	_, err = db.ExecContext(ctx, "INSERT INTO t VALUES (:id, ?)", sql.Named("id", 3), "x")
+	if !errors.Is(err, errMixedArgs) {
+		t.Fatalf("expected errMixedArgs, got %v", err)
+	}
+
+	// Prepared statements do not accept named args
+	stmt, err := db.PrepareContext(ctx, "SELECT name FROM t WHERE id = :id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+	if _, err := stmt.ExecContext(ctx, sql.Named("id", 1)); !errors.Is(err, errNamedStmtUnsupported) {
+		t.Fatalf("expected errNamedStmtUnsupported, got %v", err)
+	}
+}

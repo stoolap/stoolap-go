@@ -23,10 +23,12 @@ TEXT abiCallTrampoline(SB), NOSPLIT, $64
 	// a5 goes on stack (5th arg)
 	MOVQ 40(R12), BX
 	MOVQ BX, 32(SP)        // shadow space + 5th arg at RSP+32
+	MOVQ 48(R12), BX
+	MOVQ BX, 40(SP)        // 6th arg at RSP+40
 
 	CALL AX
 
-	MOVQ AX, 48(R12)       // r1 = return value
+	MOVQ AX, 56(R12)       // r1 = return value
 	MOVQ 16(SP), R12
 	MOVQ 8(SP), BX
 	RET

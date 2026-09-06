@@ -29,6 +29,14 @@ The native driver loads `libstoolap` at runtime via direct ABI calls. No C compi
 
 - Go 1.24+
 
+Go 1.27 and later reject the `runtime.asmcgocall` linkname the native driver uses. Until a linkname-free path ships, build with the linker check disabled:
+
+```bash
+go build -ldflags=-checklinkname=0 ./...
+# or set it once for every command
+export GOFLAGS=-ldflags=-checklinkname=0
+```
+
 ### Installation
 
 ```bash
@@ -257,8 +265,10 @@ func (db *DB) Close() error
 func (db *DB) Clone() (*DB, error)
 func (db *DB) Exec(ctx context.Context, query string) (sql.Result, error)
 func (db *DB) ExecParams(ctx context.Context, query string, args []any) (sql.Result, error)
+func (db *DB) ExecNamed(ctx context.Context, query string, args []sql.NamedArg) (sql.Result, error)
 func (db *DB) Query(ctx context.Context, query string) (*Rows, error)
 func (db *DB) QueryParams(ctx context.Context, query string, args []any) (*Rows, error)
+func (db *DB) QueryNamed(ctx context.Context, query string, args []sql.NamedArg) (*Rows, error)
 func (db *DB) Prepare(ctx context.Context, query string) (*Stmt, error)
 func (db *DB) Begin(ctx context.Context) (*Tx, error)
 func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error)
@@ -278,8 +288,19 @@ func (r *Rows) FetchAll() ([][]any, error)
 
 ```go
 func (s *Stmt) ExecContext(ctx context.Context, args []any) (sql.Result, error)
+func (s *Stmt) ExecBatch(ctx context.Context, rows [][]any) (sql.Result, error)
 func (s *Stmt) QueryContext(ctx context.Context, args []any) (*Rows, error)
 func (s *Stmt) Close() error
+```
+
+`ExecBatch` runs the statement once per row inside a single transaction with one native call. Every row must have the same number of parameters. If any row fails the whole batch is rolled back.
+
+```go
+stmt, _ := db.Prepare(ctx, "INSERT INTO users VALUES ($1, $2, $3)")
+res, err := stmt.ExecBatch(ctx, [][]any{
+    {int64(1), "Alice", int64(30)},
+    {int64(2), "Bob", int64(25)},
+})
 ```
 
 ### Tx
@@ -287,8 +308,10 @@ func (s *Stmt) Close() error
 ```go
 func (tx *Tx) Exec(ctx context.Context, query string) (sql.Result, error)
 func (tx *Tx) ExecParams(ctx context.Context, query string, args []any) (sql.Result, error)
+func (tx *Tx) ExecNamed(ctx context.Context, query string, args []sql.NamedArg) (sql.Result, error)
 func (tx *Tx) Query(ctx context.Context, query string) (*Rows, error)
 func (tx *Tx) QueryParams(ctx context.Context, query string, args []any) (*Rows, error)
+func (tx *Tx) QueryNamed(ctx context.Context, query string, args []sql.NamedArg) (*Rows, error)
 func (tx *Tx) Commit() error
 func (tx *Tx) Rollback() error
 ```
@@ -309,6 +332,22 @@ With `database/sql`, use `?` placeholders as usual:
 
 ```go
 db.ExecContext(ctx, "INSERT INTO users VALUES (?, ?, ?)", 1, "Alice", 30)
+```
+
+Named parameters use `:name` placeholders. A name may appear more than once in the query.
+
+```go
+db.ExecNamed(ctx, "INSERT INTO users VALUES (:id, :name, :age)", []sql.NamedArg{
+    sql.Named("id", int64(1)), sql.Named("name", "Alice"), sql.Named("age", int64(30)),
+})
+rows, _ := db.QueryNamed(ctx, "SELECT * FROM users WHERE age > :min", []sql.NamedArg{sql.Named("min", int64(18))})
+```
+
+With `database/sql`, pass `sql.Named` values. Named and positional arguments cannot be mixed in one call, and prepared statements accept positional arguments only.
+
+```go
+db.ExecContext(ctx, "INSERT INTO users VALUES (:id, :name, :age)",
+    sql.Named("id", 1), sql.Named("name", "Alice"), sql.Named("age", 30))
 ```
 
 ## Transactions

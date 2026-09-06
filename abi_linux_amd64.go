@@ -39,6 +39,7 @@ type abiCallFrame struct {
 	a3 uintptr
 	a4 uintptr
 	a5 uintptr
+	a6 uintptr
 	r1 uintptr
 }
 
@@ -101,6 +102,13 @@ func abiCall4(fn, a1, a2, a3, a4 uintptr) uintptr {
 //go:nosplit
 func abiCall5(fn, a1, a2, a3, a4, a5 uintptr) uintptr {
 	frame := abiCallFrame{fn: fn, a1: a1, a2: a2, a3: a3, a4: a4, a5: a5}
+	runtime_asmcgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
+	return frame.r1
+}
+
+//go:nosplit
+func abiCall6(fn, a1, a2, a3, a4, a5, a6 uintptr) uintptr {
+	frame := abiCallFrame{fn: fn, a1: a1, a2: a2, a3: a3, a4: a4, a5: a5, a6: a6}
 	runtime_asmcgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
 	return frame.r1
 }
