@@ -1,6 +1,6 @@
 module github.com/stoolap/stoolap-go
 
-go 1.24
+go 1.25
 
 require (
 	github.com/stoolap/stoolap-go/lib/darwin_arm64 v0.4.2

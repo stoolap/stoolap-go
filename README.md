@@ -27,7 +27,7 @@ The native driver loads `libstoolap` at runtime via direct ABI calls. No C compi
 
 ### Requirements
 
-- Go 1.24+
+- Go 1.25+
 
 ### Installation
 
