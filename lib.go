@@ -39,7 +39,6 @@ import (
 // Status codes
 const (
 	stoolapOK   = 0
-	stoolapRow  = 100
 	stoolapDone = 101
 )
 
@@ -66,54 +65,51 @@ const (
 // Called via abiCallN → runtime.cgocall → platform trampoline.
 var sym struct {
 	// DB operations
-	version      uintptr
-	open         uintptr
-	openInMemory uintptr
-	close        uintptr
-	clone        uintptr
-	errmsg       uintptr
-	exec         uintptr
-	execParams   uintptr
-	execNamed    uintptr
-	query        uintptr
-	queryParams  uintptr
-	queryNamed   uintptr
-	prepare      uintptr
-	begin        uintptr
-	beginIso     uintptr
+	version        uintptr
+	open           uintptr
+	openInMemory   uintptr
+	close          uintptr
+	clone          uintptr
+	errmsg         uintptr
+	exec           uintptr
+	execParams     uintptr
+	execNamed      uintptr
+	query          uintptr
+	queryParams    uintptr
+	queryNamed     uintptr
+	queryParamsAll uintptr
+	prepare        uintptr
+	begin          uintptr
+	beginIso       uintptr
 
 	// Stmt
-	stmtExec      uintptr
-	stmtExecBatch uintptr
-	stmtQuery     uintptr
-	stmtFinalize  uintptr
-	stmtErrmsg    uintptr
+	stmtExec          uintptr
+	stmtExecBatch     uintptr
+	stmtQuery         uintptr
+	stmtExecNamed     uintptr
+	stmtQueryNamed    uintptr
+	stmtQueryAll      uintptr
+	stmtQueryNamedAll uintptr
+	stmtFinalize      uintptr
+	stmtErrmsg        uintptr
 
 	// Tx
-	txExec        uintptr
-	txExecParams  uintptr
-	txExecNamed   uintptr
-	txQuery       uintptr
-	txQueryParams uintptr
-	txQueryNamed  uintptr
-	txCommit      uintptr
-	txRollback    uintptr
-	txErrmsg      uintptr
+	txExec          uintptr
+	txExecParams    uintptr
+	txExecNamed     uintptr
+	txQuery         uintptr
+	txQueryParams   uintptr
+	txQueryNamed    uintptr
+	txStmtExec      uintptr
+	txStmtExecNamed uintptr
+	txCommit        uintptr
+	txRollback      uintptr
+	txErrmsg        uintptr
 
 	// Rows
-	rowsNext         uintptr
-	rowsColCount     uintptr
-	rowsColName      uintptr
-	rowsColType      uintptr
-	rowsColInt64     uintptr
-	rowsColDouble    uintptr
-	rowsColText      uintptr
-	rowsColBool      uintptr
-	rowsColTimestamp uintptr
-	rowsColBlob      uintptr
-	rowsColIsNull    uintptr
-	rowsClose        uintptr
-	rowsErrmsg       uintptr
+	rowsClose      uintptr
+	rowsErrmsg     uintptr
+	rowsFetchChunk uintptr
 
 	// Bulk
 	rowsFetchAll uintptr
@@ -170,12 +166,17 @@ func loadLibrary() error {
 		sym.query = must("stoolap_query")
 		sym.queryParams = must("stoolap_query_params")
 		sym.queryNamed = must("stoolap_query_named")
+		sym.queryParamsAll = must("stoolap_query_params_all")
 		sym.prepare = must("stoolap_prepare")
 		sym.begin = must("stoolap_begin")
 		sym.beginIso = must("stoolap_begin_with_isolation")
 		sym.stmtExec = must("stoolap_stmt_exec")
 		sym.stmtExecBatch = must("stoolap_stmt_exec_batch")
 		sym.stmtQuery = must("stoolap_stmt_query")
+		sym.stmtExecNamed = must("stoolap_stmt_exec_named")
+		sym.stmtQueryNamed = must("stoolap_stmt_query_named")
+		sym.stmtQueryAll = must("stoolap_stmt_query_all")
+		sym.stmtQueryNamedAll = must("stoolap_stmt_query_named_all")
 		sym.stmtFinalize = must("stoolap_stmt_finalize")
 		sym.stmtErrmsg = must("stoolap_stmt_errmsg")
 		sym.txExec = must("stoolap_tx_exec")
@@ -184,22 +185,14 @@ func loadLibrary() error {
 		sym.txQuery = must("stoolap_tx_query")
 		sym.txQueryParams = must("stoolap_tx_query_params")
 		sym.txQueryNamed = must("stoolap_tx_query_named")
+		sym.txStmtExec = must("stoolap_tx_stmt_exec")
+		sym.txStmtExecNamed = must("stoolap_tx_stmt_exec_named")
 		sym.txCommit = must("stoolap_tx_commit")
 		sym.txRollback = must("stoolap_tx_rollback")
 		sym.txErrmsg = must("stoolap_tx_errmsg")
-		sym.rowsNext = must("stoolap_rows_next")
-		sym.rowsColCount = must("stoolap_rows_column_count")
-		sym.rowsColName = must("stoolap_rows_column_name")
-		sym.rowsColType = must("stoolap_rows_column_type")
-		sym.rowsColInt64 = must("stoolap_rows_column_int64")
-		sym.rowsColDouble = must("stoolap_rows_column_double")
-		sym.rowsColText = must("stoolap_rows_column_text")
-		sym.rowsColBool = must("stoolap_rows_column_bool")
-		sym.rowsColTimestamp = must("stoolap_rows_column_timestamp")
-		sym.rowsColBlob = must("stoolap_rows_column_blob")
-		sym.rowsColIsNull = must("stoolap_rows_column_is_null")
 		sym.rowsClose = must("stoolap_rows_close")
 		sym.rowsErrmsg = must("stoolap_rows_errmsg")
+		sym.rowsFetchChunk = must("stoolap_rows_fetch_chunk")
 		sym.rowsFetchAll = must("stoolap_rows_fetch_all")
 		sym.bufferFree = must("stoolap_buffer_free")
 	})

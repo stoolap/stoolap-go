@@ -190,38 +190,51 @@ func (c *driverConn) QueryContext(ctx context.Context, query string, args []driv
 	if c.closed {
 		return nil, driver.ErrBadConn
 	}
-	goArgs := namedToAny(args)
-
-	var r *Rows
+	var cols []string
+	var rows [][]any
 	var err error
 	if hasNamed(args) {
+		// The engine has no one-call entry point for ad hoc named queries,
+		// so this path goes through a rows handle and drains it.
 		var named []sql.NamedArg
 		named, err = toNamedArgs(args)
 		if err != nil {
 			return nil, err
 		}
+		var r *Rows
 		if c.tx != nil {
 			r, err = c.tx.QueryNamed(ctx, query, named)
 		} else {
 			r, err = c.db.QueryNamed(ctx, query, named)
 		}
+		if err != nil {
+			return nil, err
+		}
+		cols, rows, err = drainRows(r)
 	} else if c.tx != nil {
-		if len(goArgs) == 0 {
-			r, err = c.tx.Query(ctx, query)
-		} else {
-			r, err = c.tx.QueryParams(ctx, query, goArgs)
+		if c.tx.ptr == 0 {
+			return nil, errTxDone
 		}
+		cols, rows, err = c.db.queryAllPacked(ctx, c.tx.ptr, query, namedToAny(args))
 	} else {
-		if len(goArgs) == 0 {
-			r, err = c.db.Query(ctx, query)
-		} else {
-			r, err = c.db.QueryParams(ctx, query, goArgs)
-		}
+		cols, rows, err = c.db.queryAllPacked(ctx, 0, query, namedToAny(args))
 	}
 	if err != nil {
 		return nil, err
 	}
-	return newDriverRows(r), nil
+	return newDriverRows(cols, rows), nil
+}
+
+// drainRows fetches everything a rows handle holds and closes it.
+func drainRows(r *Rows) ([]string, [][]any, error) {
+	rows, err := r.FetchAll()
+	if err != nil {
+		r.Close()
+		return nil, nil, err
+	}
+	cols := r.Columns()
+	r.Close()
+	return cols, rows, nil
 }
 
 func (c *driverConn) Ping(ctx context.Context) error {
@@ -296,81 +309,93 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 	return s.QueryContext(context.Background(), valuesToNamed(args))
 }
 
-func (s *driverStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	if hasNamed(args) {
-		return nil, errNamedStmtUnsupported
+// txPtr returns the open transaction of the statement's connection, or 0.
+func (s *driverStmt) txPtr() (uintptr, error) {
+	if s.conn.tx == nil {
+		return 0, nil
 	}
-	return s.stmt.ExecContext(ctx, namedToAny(args))
+	if s.conn.tx.ptr == 0 {
+		return 0, errTxDone
+	}
+	return s.conn.tx.ptr, nil
 }
 
-func (s *driverStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	if hasNamed(args) {
-		return nil, errNamedStmtUnsupported
-	}
-	r, err := s.stmt.QueryContext(ctx, namedToAny(args))
+func (s *driverStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	tx, err := s.txPtr()
 	if err != nil {
 		return nil, err
 	}
-	return newDriverRows(r), nil
+	if hasNamed(args) {
+		named, err := toNamedArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		return s.stmt.execNamedIn(ctx, tx, named)
+	}
+	return s.stmt.execIn(ctx, tx, namedToAny(args))
+}
+
+func (s *driverStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	tx, err := s.txPtr()
+	if err != nil {
+		return nil, err
+	}
+	var cols []string
+	var rows [][]any
+	if hasNamed(args) {
+		named, err := toNamedArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		cols, rows, err = s.stmt.queryNamedAllPacked(ctx, tx, named)
+	} else {
+		cols, rows, err = s.stmt.queryAllPacked(ctx, tx, namedToAny(args))
+	}
+	if err != nil {
+		return nil, err
+	}
+	return newDriverRows(cols, rows), nil
 }
 
 // ─── Driver Rows ────────────────────────────────────────────────────────────
 
-// driverRows fetches all rows in a single native call on first Next(),
-// then serves them from Go memory. This minimizes FFI round-trips for
-// maximum throughput. QueryRow/LIMIT queries return small result sets,
-// so FetchAll is equally efficient for those cases.
+// driverRows serves a result that one native call decoded in full. The
+// engine hands every row back packed, so there is no handle to iterate and
+// nothing to close on the native side.
 type driverRows struct {
-	rows     *Rows
-	allRows  [][]any
-	cursor   int
-	colCount int
-	fetched  bool
+	cols   []string
+	rows   [][]any
+	cursor int
 }
 
 var driverRowsPool = sync.Pool{New: func() any { return &driverRows{} }}
 
-func newDriverRows(r *Rows) *driverRows {
+func newDriverRows(cols []string, rows [][]any) *driverRows {
 	dr := driverRowsPool.Get().(*driverRows)
-	dr.rows = r
-	dr.colCount = r.colCount
-	dr.allRows = nil
+	dr.cols = cols
+	dr.rows = rows
 	dr.cursor = 0
-	dr.fetched = false
 	return dr
 }
 
 func (r *driverRows) Columns() []string {
-	return r.rows.Columns()
+	return r.cols
 }
 
 func (r *driverRows) Close() error {
-	r.allRows = nil
-	err := r.rows.Close()
+	r.cols = nil
 	r.rows = nil
 	driverRowsPool.Put(r)
-	return err
+	return nil
 }
 
 func (r *driverRows) Next(dest []driver.Value) error {
-	if !r.fetched {
-		r.fetched = true
-		allRows, err := r.rows.FetchAll()
-		if err != nil {
-			return err
-		}
-		r.allRows = allRows
-		r.cursor = 0
-	}
-
-	if r.cursor >= len(r.allRows) {
+	if r.cursor >= len(r.rows) {
 		return io.EOF
 	}
-
-	row := r.allRows[r.cursor]
+	row := r.rows[r.cursor]
 	r.cursor++
-
-	for i := 0; i < r.colCount && i < len(row); i++ {
+	for i := range dest {
 		dest[i] = row[i]
 	}
 	return nil
@@ -379,7 +404,6 @@ func (r *driverRows) Next(dest []driver.Value) error {
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 var errMixedArgs = errors.New("stoolap: cannot mix named and positional arguments")
-var errNamedStmtUnsupported = errors.New("stoolap: named arguments are not supported on prepared statements")
 
 func hasNamed(args []driver.NamedValue) bool {
 	for i := range args {

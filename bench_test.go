@@ -497,3 +497,51 @@ func TestBenchmarkSummary(t *testing.T) {
 		db.ExecParams(ctx, "UPDATE users SET balance = $1 WHERE id = $2", []any{999.99, int64(42)})
 	})
 }
+
+func BenchmarkDirectQueryAllByID(b *testing.B) {
+	db := setupBenchDB(b)
+	defer db.Close()
+	ctx := context.Background()
+	args := []any{int64(0)}
+	i := 0
+
+	for b.Loop() {
+		args[0] = int64((i % benchRowCount) + 1)
+		db.QueryAll(ctx, "SELECT * FROM users WHERE id = $1", args)
+		i++
+	}
+}
+
+func BenchmarkDirectPreparedQueryAllByID(b *testing.B) {
+	db := setupBenchDB(b)
+	defer db.Close()
+	ctx := context.Background()
+	stmt, _ := db.Prepare(ctx, "SELECT * FROM users WHERE id = $1")
+	defer stmt.Close()
+	args := []any{int64(0)}
+	i := 0
+
+	for b.Loop() {
+		args[0] = int64((i % benchRowCount) + 1)
+		stmt.QueryAll(ctx, args)
+		i++
+	}
+}
+
+func BenchmarkDirectSelectFullScanTyped(b *testing.B) {
+	db := setupBenchDB(b)
+	defer db.Close()
+	ctx := context.Background()
+	var id, age int64
+	var name, email, createdAt string
+	var balance float64
+	var active bool
+
+	for b.Loop() {
+		rows, _ := db.Query(ctx, "SELECT * FROM users")
+		for rows.Next() {
+			rows.Scan(&id, &name, &email, &age, &balance, &active, &createdAt)
+		}
+		rows.Close()
+	}
+}

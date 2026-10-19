@@ -23,10 +23,12 @@ import (
 	_ "unsafe"
 )
 
-// We issue raw arm64 ABI calls through runtime.cgocall, which runs the
+// We issue raw AAPCS64 calls through runtime.cgocall, which runs the
 // trampoline on g0 so goroutine stacks stay GC-scannable and tells the
 // scheduler the goroutine is in a foreign call.
 
+// abiCallFrame carries up to 7 integer/pointer arguments to the trampoline and
+// receives the integer return value in r1.
 type abiCallFrame struct {
 	fn uintptr
 	a1 uintptr
@@ -35,37 +37,17 @@ type abiCallFrame struct {
 	a4 uintptr
 	a5 uintptr
 	a6 uintptr
+	a7 uintptr
 	r1 uintptr
 }
 
-// abiCallPtrLenFrame is used by abiCallPtrLen to pass &outLen as arg3 to
-// foreign functions like column_text/column_blob that return (ptr, outLen).
-// The out_len field lives in this struct (on goroutine stack), accessible from g0.
-type abiCallPtrLenFrame struct {
-	fn     uintptr // column_text symbol
-	a1     uintptr // rows ptr
-	a2     uintptr // column index
-	outLen int64   // ← C writes length here (passed as arg3 = &outLen)
-	r1     uintptr // return: char pointer
-}
-
-// abiCallFloatFrame captures a float64 return value from F0.
-type abiCallFloatFrame struct {
-	fn uintptr
-	a1 uintptr
-	a2 uintptr
-	r1 float64
-}
-
 var abiCallABI0 uintptr
-var abiCallPtrLenABI0 uintptr
-var abiCallFloatABI0 uintptr
 
 //go:linkname runtime_cgocall runtime.cgocall
 func runtime_cgocall(fn, arg unsafe.Pointer) int32
 
 // noescape hides a pointer from escape analysis. Safe here because
-// cgocall runs synchronously on g0 — frame is still on goroutine stack.
+// cgocall runs synchronously on g0 -- frame is still on goroutine stack.
 //
 //go:nosplit
 func noescape(p unsafe.Pointer) unsafe.Pointer {
@@ -116,28 +98,14 @@ func abiCall6(fn, a1, a2, a3, a4, a5, a6 uintptr) uintptr {
 }
 
 //go:nosplit
+func abiCall7(fn, a1, a2, a3, a4, a5, a6, a7 uintptr) uintptr {
+	frame := abiCallFrame{fn: fn, a1: a1, a2: a2, a3: a3, a4: a4, a5: a5, a6: a6, a7: a7}
+	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
+	return frame.r1
+}
+
+//go:nosplit
 func abiCallVoid1(fn, a1 uintptr) {
 	frame := abiCallFrame{fn: fn, a1: a1}
 	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
-}
-
-// abiCallPtrLen calls fn(a1, a2, &outLen) and returns (ptr, len).
-// The outLen lives in the frame struct on the goroutine stack — C writes to it
-// from g0 via the trampoline that passes &frame.outLen as arg3.
-// Eliminates the O(n) NUL-byte walk in goString for text/blob reads.
-//
-//go:nosplit
-func abiCallPtrLen(fn, a1, a2 uintptr) (uintptr, int64) {
-	frame := abiCallPtrLenFrame{fn: fn, a1: a1, a2: a2}
-	runtime_cgocall(unsafe.Pointer(abiCallPtrLenABI0), noescape(unsafe.Pointer(&frame)))
-	return frame.r1, frame.outLen
-}
-
-// abiCallFloat2 calls fn(a1, a2) and returns the float64 value from F0.
-//
-//go:nosplit
-func abiCallFloat2(fn, a1, a2 uintptr) float64 {
-	frame := abiCallFloatFrame{fn: fn, a1: a1, a2: a2}
-	runtime_cgocall(unsafe.Pointer(abiCallFloatABI0), noescape(unsafe.Pointer(&frame)))
-	return frame.r1
 }

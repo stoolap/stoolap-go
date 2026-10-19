@@ -1464,13 +1464,462 @@ func TestDatabaseSQLNamedArgs(t *testing.T) {
 		t.Fatalf("expected errMixedArgs, got %v", err)
 	}
 
-	// Prepared statements do not accept named args
+	// Prepared statements take named args too, for queries and executes.
 	stmt, err := db.PrepareContext(ctx, "SELECT name FROM t WHERE id = :id")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer stmt.Close()
-	if _, err := stmt.ExecContext(ctx, sql.Named("id", 1)); !errors.Is(err, errNamedStmtUnsupported) {
-		t.Fatalf("expected errNamedStmtUnsupported, got %v", err)
+	if err := stmt.QueryRowContext(ctx, sql.Named("id", 2)).Scan(&name); err != nil {
+		t.Fatal("prepared named query:", err)
+	}
+	if name != "bob" {
+		t.Fatalf("expected bob, got %q", name)
+	}
+	upd, err := db.PrepareContext(ctx, "UPDATE t SET name = :name WHERE id = :id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upd.Close()
+	res, err := upd.ExecContext(ctx, sql.Named("name", "robert"), sql.Named("id", 2))
+	if err != nil {
+		t.Fatal("prepared named exec:", err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		t.Fatalf("expected 1 affected, got %d", n)
+	}
+	if err := stmt.QueryRowContext(ctx, sql.Named("id", 2)).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "robert" {
+		t.Fatalf("expected robert, got %q", name)
+	}
+}
+
+func TestDatabaseSQLTxPrepared(t *testing.T) {
+	dsn := fmt.Sprintf("memory://sqltxp%d", testDBCounter.Add(1))
+	db, err := sql.Open("stoolap", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	if _, err := db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := tx.Prepare("INSERT INTO t VALUES ($1, $2)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stmt.Exec(int64(1), "alice"); err != nil {
+		t.Fatal("exec in tx:", err)
+	}
+
+	// The transaction sees its own write through a prepared query.
+	q, err := tx.Prepare("SELECT name FROM t WHERE id = $1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var name string
+	if err := q.QueryRow(int64(1)).Scan(&name); err != nil {
+		t.Fatal("query in tx:", err)
+	}
+	if name != "alice" {
+		t.Fatalf("expected alice, got %q", name)
+	}
+	q.Close()
+	stmt.Close()
+
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int64
+	if err := db.QueryRow("SELECT COUNT(*) FROM t").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("prepared statement ran outside the transaction: %d rows survived rollback", count)
+	}
+}
+
+// seedRows creates t(id, name, score, active) with n rows.
+func seedRows(t *testing.T, db *DB, n int) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := db.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, score FLOAT, active BOOLEAN)"); err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := db.Prepare(ctx, "INSERT INTO t VALUES ($1, $2, $3, $4)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+	batch := make([][]any, n)
+	for i := range n {
+		batch[i] = []any{int64(i + 1), fmt.Sprintf("user_%d", i+1), float64(i) / 2, i%3 == 0}
+	}
+	if _, err := stmt.ExecBatch(ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRowsChunkedScan(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	const n = 1000 // crosses the 32, 64, 128 and 256 row chunk sizes
+	seedRows(t, db, n)
+
+	rows, err := db.Query(ctx, "SELECT id, name, score, active FROM t ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if cols := rows.Columns(); len(cols) != 4 || cols[1] != "name" || cols[3] != "active" {
+		t.Fatalf("columns before Next: %v", cols)
+	}
+
+	var id int64
+	var name string
+	var score float64
+	var active bool
+	count := 0
+	for rows.Next() {
+		if err := rows.Scan(&id, &name, &score, &active); err != nil {
+			t.Fatal(err)
+		}
+		count++
+		if id != int64(count) || name != fmt.Sprintf("user_%d", count) || score != float64(count-1)/2 || active != ((count-1)%3 == 0) {
+			t.Fatalf("row %d: %d %q %v %v", count, id, name, score, active)
+		}
+		if rows.Int64(0) != id || rows.Float64(2) != score || rows.Bool(3) != active || rows.IsNull(1) {
+			t.Fatalf("row %d: accessors disagree with Scan", count)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if count != n {
+		t.Fatalf("expected %d rows, got %d", n, count)
+	}
+	if rows.Next() {
+		t.Fatal("Next returned true after the end")
+	}
+	if cols := rows.Columns(); len(cols) != 4 {
+		t.Fatalf("columns after the end: %v", cols)
+	}
+}
+
+func TestRowsScanBeforeNext(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	seedRows(t, db, 3)
+
+	rows, err := db.Query(context.Background(), "SELECT id FROM t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var id int64
+	if err := rows.Scan(&id); !errors.Is(err, errNoRow) {
+		t.Fatalf("expected errNoRow, got %v", err)
+	}
+	if rows.Int64(0) != 0 || !rows.IsNull(0) {
+		t.Fatal("accessors without a row must read NULL")
+	}
+}
+
+func TestFetchAllAfterNext(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	const n = 100 // more than the first chunk of 32
+	seedRows(t, db, n)
+
+	rows, err := db.Query(context.Background(), "SELECT id, name FROM t ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for i := 0; i < 5; i++ {
+		if !rows.Next() {
+			t.Fatal("Next")
+		}
+	}
+	rest, err := rows.FetchAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != n-5 {
+		t.Fatalf("expected %d remaining rows, got %d", n-5, len(rest))
+	}
+	for i, row := range rest {
+		if row[0].(int64) != int64(i+6) || row[1].(string) != fmt.Sprintf("user_%d", i+6) {
+			t.Fatalf("remaining row %d: %v", i, row)
+		}
+	}
+	if rows.Next() {
+		t.Fatal("Next returned true after FetchAll")
+	}
+	if more, err := rows.FetchAll(); err != nil || len(more) != 0 {
+		t.Fatalf("second FetchAll: %v %v", more, err)
+	}
+}
+
+func TestRowsRuntimeError(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	seedRows(t, db, 40)
+
+	// The pattern turns invalid on row 35, after the first chunk of 32 was served.
+	if _, err := db.Exec(ctx, "UPDATE t SET name = '[' WHERE id = 35"); err != nil {
+		t.Fatal(err)
+	}
+	q := "SELECT id, 'x' REGEXP name FROM t"
+	rows, err := db.Query(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for rows.Next() {
+		count++
+	}
+	if rows.Err() == nil {
+		t.Fatalf("expected an error from Next after %d rows", count)
+	}
+	if count != 32 {
+		t.Fatalf("expected the first chunk of 32 rows, got %d", count)
+	}
+	rows.Close()
+
+	if _, err := db.QueryAll(ctx, q, nil); err == nil {
+		t.Fatal("QueryAll must report the runtime error")
+	}
+	rows, err = db.Query(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rows.FetchAll(); err == nil {
+		t.Fatal("FetchAll must report the runtime error")
+	}
+	rows.Close()
+}
+
+func TestQueryAll(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	seedRows(t, db, 10)
+
+	rs, err := db.QueryAll(ctx, "SELECT id, name, score, active FROM t WHERE id > $1 ORDER BY id", []any{int64(7)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Columns) != 4 || rs.Columns[0] != "id" || rs.Columns[3] != "active" {
+		t.Fatalf("columns: %v", rs.Columns)
+	}
+	if len(rs.Rows) != 3 || rs.Rows[0][0].(int64) != 8 || rs.Rows[2][1].(string) != "user_10" || rs.Rows[0][2].(float64) != 3.5 || rs.Rows[2][3].(bool) != true {
+		t.Fatalf("rows: %v", rs.Rows)
+	}
+
+	// Without parameters, and an empty result still names its columns.
+	rs, err = db.QueryAll(ctx, "SELECT name FROM t WHERE id > 100", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Rows) != 0 || len(rs.Columns) != 1 || rs.Columns[0] != "name" {
+		t.Fatalf("empty result: %v %v", rs.Columns, rs.Rows)
+	}
+
+	// Errors come back as engine errors.
+	if _, err := db.QueryAll(ctx, "SELECT * FROM missing", nil); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	// A transaction sees its own writes.
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecParams(ctx, "INSERT INTO t VALUES ($1, $2, $3, $4)", []any{int64(11), "eleven", 1.5, false}); err != nil {
+		t.Fatal(err)
+	}
+	rs, err = tx.QueryAll(ctx, "SELECT COUNT(*) FROM t", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Rows[0][0].(int64) != 11 {
+		t.Fatalf("inside tx: %v", rs.Rows)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.QueryAll(ctx, "SELECT 1", nil); !errors.Is(err, errTxDone) {
+		t.Fatalf("expected errTxDone, got %v", err)
+	}
+	rs, err = db.QueryAll(ctx, "SELECT COUNT(*) FROM t", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Rows[0][0].(int64) != 10 {
+		t.Fatalf("after rollback: %v", rs.Rows)
+	}
+
+	// Prepared, positional and named.
+	stmt, err := db.Prepare(ctx, "SELECT name FROM t WHERE id = $1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+	for i := range 3 {
+		rs, err := stmt.QueryAll(ctx, []any{int64(i + 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rs.Rows) != 1 || rs.Rows[0][0].(string) != fmt.Sprintf("user_%d", i+1) {
+			t.Fatalf("stmt QueryAll %d: %v", i, rs.Rows)
+		}
+	}
+	named, err := db.Prepare(ctx, "SELECT name FROM t WHERE id = :id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer named.Close()
+	rs, err = named.QueryNamedAll(ctx, []sql.NamedArg{sql.Named("id", int64(4))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Rows) != 1 || rs.Rows[0][0].(string) != "user_4" {
+		t.Fatalf("stmt QueryNamedAll: %v", rs.Rows)
+	}
+}
+
+func TestPreparedNamed(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	seedRows(t, db, 5)
+
+	upd, err := db.Prepare(ctx, "UPDATE t SET name = :name WHERE id = :id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upd.Close()
+	res, err := upd.ExecNamed(ctx, []sql.NamedArg{sql.Named("name", "renamed"), sql.Named("id", int64(2))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		t.Fatalf("expected 1 affected, got %d", n)
+	}
+
+	sel, err := db.Prepare(ctx, "SELECT id, name FROM t WHERE name = :name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sel.Close()
+	rows, err := sel.QueryNamed(ctx, []sql.NamedArg{sql.Named("name", "renamed")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		t.Fatal("expected a row")
+	}
+	var id int64
+	var name string
+	if err := rows.Scan(&id, &name); err != nil {
+		t.Fatal(err)
+	}
+	if id != 2 || name != "renamed" {
+		t.Fatalf("got %d %q", id, name)
+	}
+	if _, err := upd.ExecNamed(ctx, []sql.NamedArg{sql.Named("", "x")}); !errors.Is(err, errEmptyParamName) {
+		t.Fatalf("expected errEmptyParamName, got %v", err)
+	}
+}
+
+func TestScanStringConversions(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	rows, err := db.Query(ctx, "SELECT 42, 2.5, true, 'text', NULL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		t.Fatal("expected a row")
+	}
+	var a, b, c, d string
+	var e sql.NullString
+	if err := rows.Scan(&a, &b, &c, &d, &e); err != nil {
+		t.Fatal(err)
+	}
+	if a != "42" || b != "2.5" || c != "true" || d != "text" || e.Valid {
+		t.Fatalf("got %q %q %q %q %v", a, b, c, d, e)
+	}
+	// Numeric text converts the way the engine's accessors do.
+	rows2, err := db.Query(ctx, "SELECT '17', '1.5', 'yes', 3.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows2.Close()
+	rows2.Next()
+	if rows2.Int64(0) != 17 || rows2.Float64(1) != 1.5 || !rows2.Bool(2) || rows2.Int64(3) != 3 {
+		t.Fatalf("conversions: %d %v %v %d", rows2.Int64(0), rows2.Float64(1), rows2.Bool(2), rows2.Int64(3))
+	}
+}
+
+func TestDatabaseSQLLargeResult(t *testing.T) {
+	dsn := fmt.Sprintf("memory://sqllarge%d", testDBCounter.Add(1))
+	sdb, err := sql.Open("stoolap", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sdb.Close()
+	direct, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer direct.Close()
+	seedRows(t, direct, 5000)
+
+	rows, err := sdb.Query("SELECT id, name, score, active FROM t ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	cols, _ := rows.Columns()
+	if len(cols) != 4 || cols[2] != "score" {
+		t.Fatalf("columns: %v", cols)
+	}
+	count := 0
+	for rows.Next() {
+		var id int64
+		var name string
+		var score float64
+		var active bool
+		if err := rows.Scan(&id, &name, &score, &active); err != nil {
+			t.Fatal(err)
+		}
+		count++
+		if id != int64(count) {
+			t.Fatalf("row %d has id %d", count, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if count != 5000 {
+		t.Fatalf("expected 5000 rows, got %d", count)
 	}
 }

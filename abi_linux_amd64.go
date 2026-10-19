@@ -32,6 +32,8 @@ import (
 // We use the same assembly trampolines as darwin/amd64 but dispatch through
 // cgocall instead of asmcgocall.
 
+// abiCallFrame carries up to 7 integer/pointer arguments to the trampoline and
+// receives the integer return value in r1.
 type abiCallFrame struct {
 	fn uintptr
 	a1 uintptr
@@ -40,31 +42,18 @@ type abiCallFrame struct {
 	a4 uintptr
 	a5 uintptr
 	a6 uintptr
+	a7 uintptr
 	r1 uintptr
 }
 
-type abiCallPtrLenFrame struct {
-	fn     uintptr
-	a1     uintptr
-	a2     uintptr
-	outLen int64
-	r1     uintptr
-}
-
-type abiCallFloatFrame struct {
-	fn uintptr
-	a1 uintptr
-	a2 uintptr
-	r1 float64
-}
-
 var abiCallABI0 uintptr
-var abiCallPtrLenABI0 uintptr
-var abiCallFloatABI0 uintptr
 
 //go:linkname runtime_cgocall runtime.cgocall
 func runtime_cgocall(fn, arg unsafe.Pointer) int32
 
+// noescape hides a pointer from escape analysis. Safe here because
+// cgocall runs synchronously on g0 -- frame is still on goroutine stack.
+//
 //go:nosplit
 func noescape(p unsafe.Pointer) unsafe.Pointer {
 	x := uintptr(p)
@@ -114,21 +103,14 @@ func abiCall6(fn, a1, a2, a3, a4, a5, a6 uintptr) uintptr {
 }
 
 //go:nosplit
+func abiCall7(fn, a1, a2, a3, a4, a5, a6, a7 uintptr) uintptr {
+	frame := abiCallFrame{fn: fn, a1: a1, a2: a2, a3: a3, a4: a4, a5: a5, a6: a6, a7: a7}
+	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
+	return frame.r1
+}
+
+//go:nosplit
 func abiCallVoid1(fn, a1 uintptr) {
 	frame := abiCallFrame{fn: fn, a1: a1}
 	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
-}
-
-//go:nosplit
-func abiCallPtrLen(fn, a1, a2 uintptr) (uintptr, int64) {
-	frame := abiCallPtrLenFrame{fn: fn, a1: a1, a2: a2}
-	runtime_cgocall(unsafe.Pointer(abiCallPtrLenABI0), noescape(unsafe.Pointer(&frame)))
-	return frame.r1, frame.outLen
-}
-
-//go:nosplit
-func abiCallFloat2(fn, a1, a2 uintptr) float64 {
-	frame := abiCallFloatFrame{fn: fn, a1: a1, a2: a2}
-	runtime_cgocall(unsafe.Pointer(abiCallFloatABI0), noescape(unsafe.Pointer(&frame)))
-	return frame.r1
 }
