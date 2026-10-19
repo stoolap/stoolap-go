@@ -29,14 +29,6 @@ The native driver loads `libstoolap` at runtime via direct ABI calls. No C compi
 
 - Go 1.24+
 
-Go 1.27 and later reject the `runtime.asmcgocall` linkname the native driver uses. Until a linkname-free path ships, build with the linker check disabled:
-
-```bash
-go build -ldflags=-checklinkname=0 ./...
-# or set it once for every command
-export GOFLAGS=-ldflags=-checklinkname=0
-```
-
 ### Installation
 
 ```bash

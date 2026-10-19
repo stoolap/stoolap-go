@@ -612,7 +612,7 @@ func main() {
 	fmt.Println()
 	fmt.Println("NOTES:")
 	fmt.Println("- Both engines use database/sql")
-	fmt.Println("- Stoolap: purego driver (dlopen + asmcgocall, no CGO)")
+	fmt.Println("- Stoolap: purego driver (dlopen + cgocall, no CGO)")
 	fmt.Println("- SQLite: mattn/go-sqlite3 (CGO)")
 	fmt.Println("- Ratio > 1x = Stoolap faster  |  * = SQLite faster")
 	fmt.Println("================================================================================")

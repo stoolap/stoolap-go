@@ -63,7 +63,7 @@ const (
 
 // sym holds raw function pointers for direct ABI calls.
 // Zero-dependency: loaded via our own dlopen/dlsym (no purego library).
-// Called via abiCallN → runtime.asmcgocall → ARM64 trampoline.
+// Called via abiCallN → runtime.cgocall → platform trampoline.
 var sym struct {
 	// DB operations
 	version      uintptr

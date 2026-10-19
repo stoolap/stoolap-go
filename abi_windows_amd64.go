@@ -53,8 +53,8 @@ var abiCallABI0 uintptr
 var abiCallPtrLenABI0 uintptr
 var abiCallFloatABI0 uintptr
 
-//go:linkname runtime_asmcgocall runtime.asmcgocall
-func runtime_asmcgocall(fn, arg unsafe.Pointer) int32
+//go:linkname runtime_cgocall runtime.cgocall
+func runtime_cgocall(fn, arg unsafe.Pointer) int32
 
 //go:nosplit
 func noescape(p unsafe.Pointer) unsafe.Pointer {
@@ -65,61 +65,61 @@ func noescape(p unsafe.Pointer) unsafe.Pointer {
 //go:nosplit
 func abiCall1(fn, a1 uintptr) uintptr {
 	frame := abiCallFrame{fn: fn, a1: a1}
-	runtime_asmcgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
+	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
 	return frame.r1
 }
 
 //go:nosplit
 func abiCall2(fn, a1, a2 uintptr) uintptr {
 	frame := abiCallFrame{fn: fn, a1: a1, a2: a2}
-	runtime_asmcgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
+	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
 	return frame.r1
 }
 
 //go:nosplit
 func abiCall3(fn, a1, a2, a3 uintptr) uintptr {
 	frame := abiCallFrame{fn: fn, a1: a1, a2: a2, a3: a3}
-	runtime_asmcgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
+	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
 	return frame.r1
 }
 
 //go:nosplit
 func abiCall4(fn, a1, a2, a3, a4 uintptr) uintptr {
 	frame := abiCallFrame{fn: fn, a1: a1, a2: a2, a3: a3, a4: a4}
-	runtime_asmcgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
+	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
 	return frame.r1
 }
 
 //go:nosplit
 func abiCall5(fn, a1, a2, a3, a4, a5 uintptr) uintptr {
 	frame := abiCallFrame{fn: fn, a1: a1, a2: a2, a3: a3, a4: a4, a5: a5}
-	runtime_asmcgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
+	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
 	return frame.r1
 }
 
 //go:nosplit
 func abiCall6(fn, a1, a2, a3, a4, a5, a6 uintptr) uintptr {
 	frame := abiCallFrame{fn: fn, a1: a1, a2: a2, a3: a3, a4: a4, a5: a5, a6: a6}
-	runtime_asmcgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
+	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
 	return frame.r1
 }
 
 //go:nosplit
 func abiCallVoid1(fn, a1 uintptr) {
 	frame := abiCallFrame{fn: fn, a1: a1}
-	runtime_asmcgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
+	runtime_cgocall(unsafe.Pointer(abiCallABI0), noescape(unsafe.Pointer(&frame)))
 }
 
 //go:nosplit
 func abiCallPtrLen(fn, a1, a2 uintptr) (uintptr, int64) {
 	frame := abiCallPtrLenFrame{fn: fn, a1: a1, a2: a2}
-	runtime_asmcgocall(unsafe.Pointer(abiCallPtrLenABI0), noescape(unsafe.Pointer(&frame)))
+	runtime_cgocall(unsafe.Pointer(abiCallPtrLenABI0), noescape(unsafe.Pointer(&frame)))
 	return frame.r1, frame.outLen
 }
 
 //go:nosplit
 func abiCallFloat2(fn, a1, a2 uintptr) float64 {
 	frame := abiCallFloatFrame{fn: fn, a1: a1, a2: a2}
-	runtime_asmcgocall(unsafe.Pointer(abiCallFloatABI0), noescape(unsafe.Pointer(&frame)))
+	runtime_cgocall(unsafe.Pointer(abiCallFloatABI0), noescape(unsafe.Pointer(&frame)))
 	return frame.r1
 }

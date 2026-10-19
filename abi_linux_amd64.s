@@ -3,8 +3,7 @@
 #include "textflag.h"
 
 // Same trampolines as abi_amd64.s but compiled only for linux/amd64.
-// The Go-side dispatch uses runtime.cgocall instead of asmcgocall
-// to preserve FS (TLS) on the g0 stack.
+// The Go-side dispatch uses runtime.cgocall.
 
 GLOBL ·abiCallABI0(SB), NOPTR|RODATA, $8
 DATA ·abiCallABI0(SB)/8, $abiCallTrampoline(SB)
