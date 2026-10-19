@@ -7,4 +7,15 @@ require (
 	github.com/stoolap/stoolap-go v0.0.0
 )
 
-replace github.com/stoolap/stoolap-go => ../..
+require (
+	github.com/stoolap/stoolap-go/lib/darwin_arm64 v0.4.2 // indirect
+	github.com/stoolap/stoolap-go/lib/linux_amd64 v0.4.2 // indirect
+	github.com/stoolap/stoolap-go/lib/windows_amd64 v0.4.2 // indirect
+)
+
+replace (
+	github.com/stoolap/stoolap-go => ../..
+	github.com/stoolap/stoolap-go/lib/darwin_arm64 => ../../lib/darwin_arm64
+	github.com/stoolap/stoolap-go/lib/linux_amd64 => ../../lib/linux_amd64
+	github.com/stoolap/stoolap-go/lib/windows_amd64 => ../../lib/windows_amd64
+)
