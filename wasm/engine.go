@@ -500,7 +500,9 @@ func (e *Engine) writeParams(ctx context.Context, args []any) (uint32, error) {
 	if arrayPtr == 0 {
 		return 0, errors.New("stoolap-wasm: arena overflow for params")
 	}
-	var strDataPtr uint32
+	// An empty TEXT or BLOB still needs a non-zero pointer: the engine reads
+	// pointer 0 as SQL NULL. Point it at the array; only the length is read.
+	strDataPtr := arrayPtr
 	if strDataSize > 0 {
 		strDataPtr = e.arenaAlloc(strDataSize, 1)
 		if strDataPtr == 0 {

@@ -962,3 +962,27 @@ func TestSetWASM(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEmptyParamsAreNotNull(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	for _, arg := range []any{"", []byte{}} {
+		rows, err := db.QueryParams(ctx, "SELECT $1 IS NULL", []any{arg})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var isNull bool
+		if !rows.Next() {
+			t.Fatal("expected a row")
+		}
+		if err := rows.Scan(&isNull); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+		if isNull {
+			t.Fatalf("empty %T parameter became NULL", arg)
+		}
+	}
+}

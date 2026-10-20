@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1945,5 +1946,180 @@ func TestDatabaseSQLLargeResult(t *testing.T) {
 	}
 	if count != 5000 {
 		t.Fatalf("expected 5000 rows, got %d", count)
+	}
+}
+
+func TestEmptyParamsAreNotNull(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	check := func(label string, rs *ResultSet, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		if len(rs.Rows) != 1 || rs.Rows[0][0] != false {
+			t.Fatalf("%s: empty parameter became NULL: %v", label, rs.Rows)
+		}
+	}
+	rs, err := db.QueryAll(ctx, "SELECT $1 IS NULL", []any{""})
+	check("text", rs, err)
+	rs, err = db.QueryAll(ctx, "SELECT $1 IS NULL", []any{[]byte{}})
+	check("blob", rs, err)
+	rs, err = db.QueryNamedAll(ctx, "SELECT :s IS NULL", []sql.NamedArg{sql.Named("s", "")})
+	check("named", rs, err)
+
+	stmt, err := db.Prepare(ctx, "SELECT $1 IS NULL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+	rs, err = stmt.QueryAll(ctx, []any{""})
+	check("prepared", rs, err)
+
+	if _, err := db.Exec(ctx, "CREATE TABLE e (id INTEGER PRIMARY KEY, s TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	ins, err := db.Prepare(ctx, "INSERT INTO e VALUES ($1, $2)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ins.Close()
+	if _, err := ins.ExecBatch(ctx, [][]any{{1, ""}, {2, "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	rs, err = db.QueryAll(ctx, "SELECT COUNT(*) FROM e WHERE s = ''", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Rows[0][0] != int64(1) {
+		t.Fatalf("batch: empty string not stored as '': %v", rs.Rows)
+	}
+
+	sdb, err := sql.Open("stoolap", fmt.Sprintf("memory://empty%d", testDBCounter.Add(1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sdb.Close()
+	var isNull bool
+	if err := sdb.QueryRow("SELECT ? IS NULL", "").Scan(&isNull); err != nil {
+		t.Fatal(err)
+	}
+	if isNull {
+		t.Fatal("database/sql: empty string became NULL")
+	}
+}
+
+func TestTimestampFromText(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	rows, err := db.Query(ctx, "SELECT '2024-03-04T05:06:07Z', '2024-03-04 05:06:07.5', '2024-03-04', '2024-03-04T05:06:07+02:00', 'nope'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		t.Fatal("expected a row")
+	}
+	want := []time.Time{
+		time.Date(2024, 3, 4, 5, 6, 7, 0, time.UTC),
+		time.Date(2024, 3, 4, 5, 6, 7, 500_000_000, time.UTC),
+		time.Date(2024, 3, 4, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, 3, 4, 3, 6, 7, 0, time.UTC),
+		{},
+	}
+	for i, w := range want {
+		if got := rows.Timestamp(i); !got.Equal(w) {
+			t.Errorf("Timestamp(%d) = %v, want %v", i, got, w)
+		}
+	}
+	var a time.Time
+	var b sql.NullTime
+	if err := rows.Scan(&a, &b, new(string), new(string), new(string)); err != nil {
+		t.Fatal(err)
+	}
+	if !a.Equal(want[0]) || !b.Valid || !b.Time.Equal(want[1]) {
+		t.Fatalf("Scan: %v %v", a, b)
+	}
+}
+
+func TestScanStringMatchesEngineText(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	if _, err := db.Exec(ctx, "CREATE TABLE f (id INTEGER PRIMARY KEY, v1 VECTOR(3), v2 VECTOR(3), j JSON)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO f VALUES (1, '[1.5, 2, -3]', '[0.1, 100000, 1e-7]', '{"a": 1}')`); err != nil {
+		t.Fatal(err)
+	}
+	exprs := []string{
+		"1e21", "2.5", "3.0", "-0.0", "0.00001", "123456789.125", "1.0e-4", "1.5e300",
+		"TIMESTAMP '2024-03-04 05:06:07'", "TIMESTAMP '2024-03-04 05:06:07.123'",
+		"TIMESTAMP '2024-03-04 05:06:07.123456'", "TIMESTAMP '2024-03-04 05:06:07.123456789'",
+		"v1", "v2", "j", "true", "-7",
+	}
+	var sb strings.Builder
+	sb.WriteString("SELECT ")
+	for i, e := range exprs {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(e + ", CAST(" + e + " AS TEXT)")
+	}
+	sb.WriteString(" FROM f")
+	rows, err := db.Query(ctx, sb.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		t.Fatal("expected a row")
+	}
+	dest := make([]any, 2*len(exprs))
+	got := make([]string, 2*len(exprs))
+	for i := range dest {
+		dest[i] = &got[i]
+	}
+	if err := rows.Scan(dest...); err != nil {
+		t.Fatal(err)
+	}
+	for i, e := range exprs {
+		if got[2*i] != got[2*i+1] {
+			t.Errorf("%s: Scan gave %q, engine text is %q", e, got[2*i], got[2*i+1])
+		}
+	}
+}
+
+func TestRowsDoubleClose(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	seedRows(t, db, 3)
+
+	r1, err := db.Query(ctx, "SELECT id FROM t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r1.Close()
+	r2, err := db.Query(ctx, "SELECT id FROM t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r2.Close()
+	r1.Close() // a second Close must not touch r2
+	n := 0
+	for r2.Next() {
+		n++
+	}
+	if err := r2.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("second Close of an earlier Rows broke a live result: got %d rows, want 3", n)
 	}
 }

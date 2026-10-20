@@ -1102,6 +1102,10 @@ func resizeBytes(buf []byte, size int) []byte {
 
 var errUnsupportedParamType = errors.New("stoolap: unsupported parameter type")
 
+// emptyPayload gives an empty TEXT or BLOB parameter a non-NULL pointer. The
+// engine reads a NULL pointer as SQL NULL and only the length otherwise.
+var emptyPayload byte
+
 func encodeParamsBuffers(args []any, buf, data []byte) (encodedParams, error) {
 	if len(args) == 0 {
 		return encodedParams{}, nil
@@ -1139,6 +1143,8 @@ func encodeParamsBuffers(args []any, buf, data []byte) (encodedParams, error) {
 				copy(data[dataOff:dataOff+len(v)], v)
 				putPtr(buf[off+8:], uintptr(unsafe.Pointer(&data[dataOff])))
 				dataOff += len(v)
+			} else {
+				putPtr(buf[off+8:], uintptr(unsafe.Pointer(&emptyPayload)))
 			}
 			binary.LittleEndian.PutUint64(buf[off+16:], uint64(len(v)))
 		case []byte:
@@ -1147,6 +1153,8 @@ func encodeParamsBuffers(args []any, buf, data []byte) (encodedParams, error) {
 				copy(data[dataOff:dataOff+len(v)], v)
 				putPtr(buf[off+8:], uintptr(unsafe.Pointer(&data[dataOff])))
 				dataOff += len(v)
+			} else {
+				putPtr(buf[off+8:], uintptr(unsafe.Pointer(&emptyPayload)))
 			}
 			binary.LittleEndian.PutUint64(buf[off+16:], uint64(len(v)))
 		case time.Time:
@@ -1199,6 +1207,8 @@ func encodeValue(buf, data []byte, dataOff int, arg any) (int, error) {
 			copy(data[dataOff:dataOff+len(v)], v)
 			putPtr(buf[8:], uintptr(unsafe.Pointer(&data[dataOff])))
 			dataOff += len(v)
+		} else {
+			putPtr(buf[8:], uintptr(unsafe.Pointer(&emptyPayload)))
 		}
 		binary.LittleEndian.PutUint64(buf[16:], uint64(len(v)))
 	case []byte:
@@ -1207,6 +1217,8 @@ func encodeValue(buf, data []byte, dataOff int, arg any) (int, error) {
 			copy(data[dataOff:dataOff+len(v)], v)
 			putPtr(buf[8:], uintptr(unsafe.Pointer(&data[dataOff])))
 			dataOff += len(v)
+		} else {
+			putPtr(buf[8:], uintptr(unsafe.Pointer(&emptyPayload)))
 		}
 		binary.LittleEndian.PutUint64(buf[16:], uint64(len(v)))
 	case time.Time:

@@ -23,7 +23,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unsafe"
 )
@@ -62,22 +61,11 @@ type Rows struct {
 	hasRow       bool // Next returned true for the current row
 }
 
-var rowsPool = sync.Pool{New: func() any { return &Rows{} }}
-
+// newRows allocates a fresh Rows. The struct is not pooled: a caller that
+// closes a result twice (defer plus an explicit Close is common) would
+// otherwise close whichever later query reused the object.
 func newRows(ptr uintptr) *Rows {
-	r := rowsPool.Get().(*Rows)
-	r.ptr = ptr
-	r.chunk = nil
-	r.rowOff, r.rowIdx, r.chunkRows = 0, 0, 0
-	r.chunkMax = firstChunkRows
-	r.colCount = 0
-	r.cols = nil
-	r.err = nil
-	r.closed, r.done, r.hasRow = false, false, false
-	if r.textBuf == nil {
-		r.textBuf = make([]byte, 0, 256)
-	}
-	return r
+	return &Rows{ptr: ptr, chunkMax: firstChunkRows, textBuf: make([]byte, 0, 256)}
 }
 
 func (r *Rows) fail(err error) {
@@ -314,18 +302,53 @@ func (r *Rows) Bool(i int) bool {
 }
 
 // Timestamp returns the current row's TIMESTAMP value at column i. An INTEGER
-// is read as nanoseconds since the Unix epoch.
+// is read as nanoseconds since the Unix epoch and TEXT is parsed the way the
+// engine does. Anything else gives the zero time.
 func (r *Rows) Timestamp(i int) time.Time {
 	off, tag := r.value(i)
 	switch tag {
 	case typeTimestamp, typeInteger:
 		nanos := int64(binary.LittleEndian.Uint64(r.chunk[off:]))
 		return time.Unix(nanos/1e9, nanos%1e9).UTC()
+	case typeText:
+		return parseTimestamp(packedText(r.chunk, off))
 	}
 	return time.Time{}
 }
 
-// formatText renders a non-text column of the current row as a string.
+// timestampLayouts mirrors the engine's TIMESTAMP_FORMATS. Layouts without a
+// zone are read as UTC, as the engine does.
+var timestampLayouts = [...]string{
+	"2006-01-02T15:04:05.999999999Z07:00",
+	"2006-01-02T15:04:05.999999999",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02",
+	"2006/01/02 15:04:05",
+	"2006/01/02",
+	"01/02/2006",
+	"02/01/2006",
+}
+
+// parseTimestamp parses the text forms the engine's parse_timestamp accepts.
+// A time without a date takes today's date, as in the engine.
+func parseTimestamp(s string) time.Time {
+	s = strings.TrimSpace(s)
+	for _, layout := range timestampLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC()
+		}
+	}
+	for _, layout := range [...]string{"15:04:05.999999999", "15:04"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			y, m, d := time.Now().UTC().Date()
+			return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+		}
+	}
+	return time.Time{}
+}
+
+// formatText renders a non-text column of the current row as the engine's
+// text form, so Scan into a string matches CAST(x AS TEXT).
 func (r *Rows) formatText(i int) string {
 	off, tag := r.value(i)
 	switch tag {
@@ -334,18 +357,91 @@ func (r *Rows) formatText(i int) string {
 	case typeInteger:
 		return strconv.FormatInt(int64(binary.LittleEndian.Uint64(r.chunk[off:])), 10)
 	case typeFloat:
-		return strconv.FormatFloat(math.Float64frombits(binary.LittleEndian.Uint64(r.chunk[off:])), 'g', -1, 64)
+		return formatFloat(math.Float64frombits(binary.LittleEndian.Uint64(r.chunk[off:])))
 	case typeBoolean:
 		return strconv.FormatBool(r.chunk[off] != 0)
 	case typeTimestamp:
-		return r.Timestamp(i).Format(time.RFC3339Nano)
+		return formatTimestamp(r.Timestamp(i))
+	case typeBlob:
+		return formatVector(packedText(r.chunk, off))
 	}
 	return ""
 }
 
+// formatFloat mirrors the engine's format_float: scientific notation outside
+// [1e-4, 1e15) with a bare exponent, no fraction for whole numbers, shortest
+// round trip digits otherwise.
+func formatFloat(v float64) string {
+	switch {
+	case math.IsNaN(v):
+		return "NaN"
+	case math.IsInf(v, 1):
+		return "Infinity"
+	case math.IsInf(v, -1):
+		return "-Infinity"
+	}
+	abs := math.Abs(v)
+	if abs != 0 && (abs < 1e-4 || abs >= 1e15) {
+		s := strconv.FormatFloat(v, 'e', -1, 64)
+		e := strings.IndexByte(s, 'e')
+		mant, exp := s[:e], s[e+1:]
+		neg := exp[0] == '-'
+		exp = strings.TrimLeft(exp[1:], "0")
+		if neg {
+			return mant + "e-" + exp
+		}
+		return mant + "e" + exp
+	}
+	if v == math.Trunc(v) {
+		return strconv.FormatFloat(v, 'f', 0, 64)
+	}
+	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// formatTimestamp mirrors chrono's to_rfc3339 for a UTC time: the fraction is
+// printed with 3, 6 or 9 digits as needed and the zone as +00:00.
+func formatTimestamp(t time.Time) string {
+	layout := "2006-01-02T15:04:05"
+	switch ns := t.Nanosecond(); {
+	case ns == 0:
+	case ns%1e6 == 0:
+		layout += ".000"
+	case ns%1e3 == 0:
+		layout += ".000000"
+	default:
+		layout += ".000000000"
+	}
+	return t.UTC().Format(layout) + "+00:00"
+}
+
+// formatVector mirrors the engine's format_vector_bytes for packed f32 data:
+// "[1.0, 2.5, -3.0]", whole numbers with one decimal, others in shortest form.
+func formatVector(data string) string {
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i := 0; i+4 <= len(data); i += 4 {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		f := math.Float32frombits(uint32(data[i]) | uint32(data[i+1])<<8 | uint32(data[i+2])<<16 | uint32(data[i+3])<<24)
+		switch f64 := float64(f); {
+		case math.IsInf(f64, 1):
+			sb.WriteString("inf")
+		case math.IsInf(f64, -1):
+			sb.WriteString("-inf")
+		case f64 == math.Trunc(f64) && !math.IsNaN(f64):
+			sb.WriteString(strconv.FormatFloat(f64, 'f', 1, 32))
+		default:
+			sb.WriteString(strconv.FormatFloat(f64, 'f', -1, 32))
+		}
+	}
+	sb.WriteByte(']')
+	return sb.String()
+}
+
 // Scan reads the current row into dest.
-// Text columns are batched into a single string allocation per row.
-// The textBuf is reused across rows via Rows pooling.
+// Text columns are batched into a single string allocation per row; textBuf
+// is reused across rows.
 func (r *Rows) Scan(dest ...any) error {
 	if r.closed {
 		return errRowsClosed
@@ -584,11 +680,6 @@ func (r *Rows) Close() error {
 	r.ptr = 0
 	r.chunk = nil
 	r.hasRow = false
-	// Release the columns slice so the next pooled use cannot share its
-	// backing array with a caller that is still holding a previous result.
-	// textBuf / colNameBuf stay: they hold no externally-visible data.
-	r.cols = nil
-	rowsPool.Put(r)
 	return nil
 }
 

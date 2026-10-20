@@ -405,15 +405,17 @@ tx.Commit()
 
 ## Type Mapping
 
-| SQL Type | Go Type | Nullable Go Type |
-|----------|---------|------------------|
-| INTEGER | `int64`, `int`, `int32` | `sql.NullInt64` |
-| FLOAT | `float64`, `float32` | `sql.NullFloat64` |
-| TEXT | `string` | `sql.NullString` |
-| BOOLEAN | `bool` | `sql.NullBool` |
-| TIMESTAMP | `time.Time` | `sql.NullTime` |
-| JSON | `string` | `sql.NullString` |
+| SQL Type | Parameter Types | Scan Types |
+|----------|-----------------|------------|
+| INTEGER | `int64`, `int`, `int32` | `int64`, `sql.NullInt64` |
+| FLOAT | `float64`, `float32` | `float64`, `sql.NullFloat64` |
+| TEXT | `string` | `string`, `sql.NullString` |
+| BOOLEAN | `bool` | `bool`, `sql.NullBool` |
+| TIMESTAMP | `time.Time` | `time.Time`, `sql.NullTime` |
+| JSON | `string` | `string`, `sql.NullString` |
 | VECTOR/BLOB | `[]byte` | `[]byte` (nil for NULL) |
+
+Scanning any column into a `string` gives the engine's text form, the same as `CAST(x AS TEXT)`. Scanning TEXT into `time.Time` parses it the way the engine does.
 
 ## Error Handling
 

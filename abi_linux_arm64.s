@@ -17,6 +17,8 @@ TEXT abiCallTrampoline(SB), NOSPLIT, $16
 	STP  (R19, R20), 16(RSP)
 	MOVD R0, R19
 	MOVD RSP, R20
+	// The Go prologue saved the caller's FP at -8(RSP). Drop below it so the
+	// callee's frame cannot overwrite that slot; R20 restores RSP afterwards.
 	SUB  $16, RSP
 	MOVD 0(R19), R12
 	MOVD 8(R19), R0

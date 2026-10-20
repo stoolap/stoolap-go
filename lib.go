@@ -37,10 +37,7 @@ import (
 )
 
 // Status codes
-const (
-	stoolapOK   = 0
-	stoolapDone = 101
-)
+const stoolapOK = 0
 
 // Type codes
 const (
@@ -312,15 +309,6 @@ func goString(ptr unsafe.Pointer) string {
 		n++
 	}
 	if n == 0 {
-		return ""
-	}
-	return string(unsafe.Slice((*byte)(ptr), n))
-}
-
-// goStringN copies n bytes from a C pointer into a Go string.
-// Skips the O(n) NUL-byte walk when length is known.
-func goStringN(ptr unsafe.Pointer, n int) string {
-	if ptr == nil || n <= 0 {
 		return ""
 	}
 	return string(unsafe.Slice((*byte)(ptr), n))
