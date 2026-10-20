@@ -78,6 +78,7 @@ var sym struct {
 	queryParams    uintptr
 	queryNamed     uintptr
 	queryParamsAll uintptr
+	queryNamedAll  uintptr
 	prepare        uintptr
 	begin          uintptr
 	beginIso       uintptr
@@ -167,6 +168,7 @@ func loadLibrary() error {
 		sym.queryParams = must("stoolap_query_params")
 		sym.queryNamed = must("stoolap_query_named")
 		sym.queryParamsAll = must("stoolap_query_params_all")
+		sym.queryNamedAll = must("stoolap_query_named_all")
 		sym.prepare = must("stoolap_prepare")
 		sym.begin = must("stoolap_begin")
 		sym.beginIso = must("stoolap_begin_with_isolation")

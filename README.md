@@ -262,6 +262,7 @@ func (db *DB) Query(ctx context.Context, query string) (*Rows, error)
 func (db *DB) QueryParams(ctx context.Context, query string, args []any) (*Rows, error)
 func (db *DB) QueryNamed(ctx context.Context, query string, args []sql.NamedArg) (*Rows, error)
 func (db *DB) QueryAll(ctx context.Context, query string, args []any) (*ResultSet, error)
+func (db *DB) QueryNamedAll(ctx context.Context, query string, args []sql.NamedArg) (*ResultSet, error)
 func (db *DB) Prepare(ctx context.Context, query string) (*Stmt, error)
 func (db *DB) Begin(ctx context.Context) (*Tx, error)
 func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error)
@@ -294,7 +295,7 @@ type ResultSet struct {
 }
 ```
 
-`QueryAll` on `DB`, `Tx` and `Stmt` runs a query and decodes every row with a single native call. No rows handle is created, so a point lookup costs one crossing. The `database/sql` driver uses this path for every query. Use `Query` and `Rows` when a result is too large to hold in memory.
+`QueryAll` and `QueryNamedAll` on `DB`, `Tx` and `Stmt` run a query and decodes every row with a single native call. No rows handle is created, so a point lookup costs one crossing. The `database/sql` driver uses this path for every query. Use `Query` and `Rows` when a result is too large to hold in memory.
 
 ```go
 rs, err := db.QueryAll(ctx, "SELECT id, name FROM users WHERE age > $1", []any{int64(18)})
@@ -336,6 +337,7 @@ func (tx *Tx) Query(ctx context.Context, query string) (*Rows, error)
 func (tx *Tx) QueryParams(ctx context.Context, query string, args []any) (*Rows, error)
 func (tx *Tx) QueryNamed(ctx context.Context, query string, args []sql.NamedArg) (*Rows, error)
 func (tx *Tx) QueryAll(ctx context.Context, query string, args []any) (*ResultSet, error)
+func (tx *Tx) QueryNamedAll(ctx context.Context, query string, args []sql.NamedArg) (*ResultSet, error)
 func (tx *Tx) Commit() error
 func (tx *Tx) Rollback() error
 ```

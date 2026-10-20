@@ -334,6 +334,16 @@ func (db *DB) QueryAll(ctx context.Context, query string, args []any) (*ResultSe
 	return &ResultSet{Columns: cols, Rows: rows}, nil
 }
 
+// QueryNamedAll runs a query with named parameters (:name) and returns every
+// row in one native call.
+func (db *DB) QueryNamedAll(ctx context.Context, query string, args []sql.NamedArg) (*ResultSet, error) {
+	cols, rows, err := db.queryNamedAllPacked(ctx, 0, query, args)
+	if err != nil {
+		return nil, err
+	}
+	return &ResultSet{Columns: cols, Rows: rows}, nil
+}
+
 // queryAllPacked runs stoolap_query_params_all on db, inside tx when tx is
 // not 0, and decodes the packed result the engine hands back.
 func (db *DB) queryAllPacked(ctx context.Context, tx uintptr, query string, args []any) ([]string, [][]any, error) {
@@ -343,14 +353,38 @@ func (db *DB) queryAllPacked(ctx context.Context, tx uintptr, query string, args
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	cs := newCStr(query)
 	ep, err := encodeParams(args)
 	if err != nil {
 		return nil, nil, err
 	}
+	return db.packedCall(sym.queryParamsAll, tx, query, ep, len(args))
+}
+
+// queryNamedAllPacked is queryAllPacked with named parameters.
+func (db *DB) queryNamedAllPacked(ctx context.Context, tx uintptr, query string, args []sql.NamedArg) ([]string, [][]any, error) {
+	if len(args) == 0 {
+		return db.queryAllPacked(ctx, tx, query, nil)
+	}
+	if db.ptr == 0 {
+		return nil, nil, errDBClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	ep, err := encodeNamedParams(args)
+	if err != nil {
+		return nil, nil, err
+	}
+	return db.packedCall(sym.queryNamedAll, tx, query, ep, len(args))
+}
+
+// packedCall issues one of the stoolap_query_*_all entry points, which share
+// the (db, tx, sql, params, len, &buf, &len) shape, and decodes the result.
+func (db *DB) packedCall(fn, tx uintptr, query string, ep encodedParams, nparams int) ([]string, [][]any, error) {
+	cs := newCStr(query)
 	var bufPtr uintptr
 	var bufLen int64
-	rc := abiCall7(sym.queryParamsAll, db.ptr, tx, cs.ptr, ep.ptr, uintptr(int32(len(args))),
+	rc := abiCall7(fn, db.ptr, tx, cs.ptr, ep.ptr, uintptr(int32(nparams)),
 		uintptr(unsafe.Pointer(&bufPtr)), uintptr(unsafe.Pointer(&bufLen)))
 	cs.keepAlive()
 	ep.keepAlive()
@@ -856,6 +890,19 @@ func (tx *Tx) QueryAll(ctx context.Context, query string, args []any) (*ResultSe
 		return nil, errTxDone
 	}
 	cols, rows, err := tx.db.queryAllPacked(ctx, tx.ptr, query, args)
+	if err != nil {
+		return nil, err
+	}
+	return &ResultSet{Columns: cols, Rows: rows}, nil
+}
+
+// QueryNamedAll runs a query with named parameters (:name) inside the
+// transaction and returns every row in one native call.
+func (tx *Tx) QueryNamedAll(ctx context.Context, query string, args []sql.NamedArg) (*ResultSet, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
+	}
+	cols, rows, err := tx.db.queryNamedAllPacked(ctx, tx.ptr, query, args)
 	if err != nil {
 		return nil, err
 	}

@@ -1799,6 +1799,30 @@ func TestQueryAll(t *testing.T) {
 	if len(rs.Rows) != 1 || rs.Rows[0][0].(string) != "user_4" {
 		t.Fatalf("stmt QueryNamedAll: %v", rs.Rows)
 	}
+
+	// Ad hoc named, outside and inside a transaction.
+	rs, err = db.QueryNamedAll(ctx, "SELECT id FROM t WHERE name = :name OR id = :id ORDER BY id", []sql.NamedArg{sql.Named("name", "user_9"), sql.Named("id", int64(2))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Rows) != 2 || rs.Rows[0][0].(int64) != 2 || rs.Rows[1][0].(int64) != 9 {
+		t.Fatalf("QueryNamedAll: %v", rs.Rows)
+	}
+	tx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecNamed(ctx, "DELETE FROM t WHERE id = :id", []sql.NamedArg{sql.Named("id", int64(2))}); err != nil {
+		t.Fatal(err)
+	}
+	rs, err = tx.QueryNamedAll(ctx, "SELECT COUNT(*) FROM t WHERE id <= :max", []sql.NamedArg{sql.Named("max", int64(3))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Rows[0][0].(int64) != 2 {
+		t.Fatalf("tx QueryNamedAll: %v", rs.Rows)
+	}
 }
 
 func TestPreparedNamed(t *testing.T) {

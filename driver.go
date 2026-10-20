@@ -190,51 +190,30 @@ func (c *driverConn) QueryContext(ctx context.Context, query string, args []driv
 	if c.closed {
 		return nil, driver.ErrBadConn
 	}
+	var tx uintptr
+	if c.tx != nil {
+		if c.tx.ptr == 0 {
+			return nil, errTxDone
+		}
+		tx = c.tx.ptr
+	}
 	var cols []string
 	var rows [][]any
 	var err error
 	if hasNamed(args) {
-		// The engine has no one-call entry point for ad hoc named queries,
-		// so this path goes through a rows handle and drains it.
 		var named []sql.NamedArg
 		named, err = toNamedArgs(args)
 		if err != nil {
 			return nil, err
 		}
-		var r *Rows
-		if c.tx != nil {
-			r, err = c.tx.QueryNamed(ctx, query, named)
-		} else {
-			r, err = c.db.QueryNamed(ctx, query, named)
-		}
-		if err != nil {
-			return nil, err
-		}
-		cols, rows, err = drainRows(r)
-	} else if c.tx != nil {
-		if c.tx.ptr == 0 {
-			return nil, errTxDone
-		}
-		cols, rows, err = c.db.queryAllPacked(ctx, c.tx.ptr, query, namedToAny(args))
+		cols, rows, err = c.db.queryNamedAllPacked(ctx, tx, query, named)
 	} else {
-		cols, rows, err = c.db.queryAllPacked(ctx, 0, query, namedToAny(args))
+		cols, rows, err = c.db.queryAllPacked(ctx, tx, query, namedToAny(args))
 	}
 	if err != nil {
 		return nil, err
 	}
 	return newDriverRows(cols, rows), nil
-}
-
-// drainRows fetches everything a rows handle holds and closes it.
-func drainRows(r *Rows) ([]string, [][]any, error) {
-	rows, err := r.FetchAll()
-	if err != nil {
-		r.Close()
-		return nil, nil, err
-	}
-	cols := r.Columns()
-	r.Close()
-	return cols, rows, nil
 }
 
 func (c *driverConn) Ping(ctx context.Context) error {
