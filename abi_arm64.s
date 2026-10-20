@@ -13,7 +13,7 @@
 GLOBL ·abiCallABI0(SB), NOPTR|RODATA, $8
 DATA ·abiCallABI0(SB)/8, $abiCallTrampoline(SB)
 
-TEXT abiCallTrampoline(SB), NOSPLIT, $16
+TEXT abiCallTrampoline(SB), NOSPLIT, $32
 	STP  (R19, R20), 16(RSP)
 	MOVD R0, R19
 	MOVD RSP, R20

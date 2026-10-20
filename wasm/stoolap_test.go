@@ -986,3 +986,23 @@ func TestEmptyParamsAreNotNull(t *testing.T) {
 		}
 	}
 }
+
+func TestNilBytesParamIsNull(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	rows, err := db.QueryParams(context.Background(), "SELECT $1 IS NULL", []any{[]byte(nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var isNull bool
+	if !rows.Next() {
+		t.Fatal("expected a row")
+	}
+	if err := rows.Scan(&isNull); err != nil {
+		t.Fatal(err)
+	}
+	if !isNull {
+		t.Fatal("nil []byte did not bind as NULL")
+	}
+}

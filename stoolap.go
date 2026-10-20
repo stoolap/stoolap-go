@@ -1148,6 +1148,10 @@ func encodeParamsBuffers(args []any, buf, data []byte) (encodedParams, error) {
 			}
 			binary.LittleEndian.PutUint64(buf[off+16:], uint64(len(v)))
 		case []byte:
+			if v == nil {
+				binary.LittleEndian.PutUint32(buf[off:], uint32(typeNull))
+				continue
+			}
 			binary.LittleEndian.PutUint32(buf[off:], uint32(typeBlob))
 			if len(v) > 0 {
 				copy(data[dataOff:dataOff+len(v)], v)
@@ -1212,6 +1216,10 @@ func encodeValue(buf, data []byte, dataOff int, arg any) (int, error) {
 		}
 		binary.LittleEndian.PutUint64(buf[16:], uint64(len(v)))
 	case []byte:
+		if v == nil {
+			binary.LittleEndian.PutUint32(buf, uint32(typeNull))
+			break
+		}
 		binary.LittleEndian.PutUint32(buf, uint32(typeBlob))
 		if len(v) > 0 {
 			copy(data[dataOff:dataOff+len(v)], v)

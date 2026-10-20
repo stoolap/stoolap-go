@@ -539,6 +539,10 @@ func (e *Engine) writeParams(ctx context.Context, args []any) (uint32, error) {
 			copy(dst, unsafe.Slice(unsafe.StringData(v), len(v)))
 			strOff += uint32(len(v))
 		case []byte:
+			if v == nil {
+				binary.LittleEndian.PutUint32(buf[off:], typeNull)
+				continue
+			}
 			binary.LittleEndian.PutUint32(buf[off:], typeBlob)
 			binary.LittleEndian.PutUint32(buf[off+8:], strOff)
 			binary.LittleEndian.PutUint64(buf[off+16:], uint64(len(v)))

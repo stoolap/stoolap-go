@@ -2123,3 +2123,99 @@ func TestRowsDoubleClose(t *testing.T) {
 		t.Fatalf("second Close of an earlier Rows broke a live result: got %d rows, want 3", n)
 	}
 }
+
+func TestNilBytesParamIsNull(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	rs, err := db.QueryAll(ctx, "SELECT $1 IS NULL", []any{[]byte(nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Rows[0][0] != true {
+		t.Fatalf("nil []byte did not bind as NULL: %v", rs.Rows)
+	}
+	rs, err = db.QueryNamedAll(ctx, "SELECT :b IS NULL", []sql.NamedArg{sql.Named("b", []byte(nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Rows[0][0] != true {
+		t.Fatalf("named nil []byte did not bind as NULL: %v", rs.Rows)
+	}
+}
+
+func TestPointQueryAllocs(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	seedRows(t, db, 10)
+	stmt, err := db.Prepare(ctx, "SELECT id, score FROM t WHERE id = $1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+
+	allocs := testing.AllocsPerRun(100, func() {
+		rows, err := stmt.QueryContext(ctx, []any{5})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rows.Next() || rows.Int64(0) != 5 {
+			t.Fatal("expected id 5")
+		}
+		rows.Close()
+	})
+	if allocs > 1 {
+		t.Fatalf("point query allocates %.0f times, want at most 1 (the Rows struct)", allocs)
+	}
+}
+
+func TestScanTimeRejectsNonTimestamps(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	for _, expr := range []string{"'nope'", "1.5", "true"} {
+		rows, err := db.Query(ctx, "SELECT "+expr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows.Next()
+		var tt time.Time
+		var nt sql.NullTime
+		if err := rows.Scan(&tt); !errors.Is(err, errNotTimestamp) {
+			t.Errorf("%s into time.Time: err = %v, want errNotTimestamp", expr, err)
+		}
+		if err := rows.Scan(&nt); !errors.Is(err, errNotTimestamp) {
+			t.Errorf("%s into NullTime: err = %v, want errNotTimestamp", expr, err)
+		}
+		rows.Close()
+	}
+}
+
+func TestTimestampTextFormsMatchEngine(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	inputs := []string{
+		"2024-03-04T05:06:07Z", "2024-03-04T05:06:07.25Z", "2024-03-04T05:06:07+02:00",
+		"2024-03-04T05:06:07+0200", "2024-03-04T05:06:07.5-0130", "2024-03-04T05:06:07 +02:00",
+		"2024-03-04 05:06:07", "2024-03-04 05:06:07.123456", "2024-03-04", "2024/03/04 05:06:07",
+		"2024/03/04", "03/04/2024", "04/03/2024", "nope", "",
+	}
+	for _, in := range inputs {
+		rows, err := db.QueryParams(ctx, "SELECT CAST($1 AS TIMESTAMP), $1", []any{in})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows.Next()
+		engineNull := rows.IsNull(0)
+		engine, got := rows.Timestamp(0), rows.Timestamp(1)
+		rows.Close()
+		if engineNull != got.IsZero() || (!engineNull && !engine.Equal(got)) {
+			t.Errorf("%q: engine null=%v %v, driver %v", in, engineNull, engine, got)
+		}
+	}
+}

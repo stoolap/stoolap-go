@@ -29,6 +29,7 @@ import (
 
 var errNoRow = errors.New("stoolap: Scan called without a current row")
 var errTruncated = errors.New("stoolap: truncated packed result")
+var errNotTimestamp = errors.New("stoolap: value is not a timestamp")
 
 // Rows asked for per fetch. The first chunk is small so a point query costs a
 // single crossing, then the size doubles up to maxChunkRows for scans.
@@ -54,6 +55,7 @@ type Rows struct {
 	colOff       []int32 // offset of each column's type tag in the current row
 	colOffInline [inlineColCap]int32
 	textBuf      []byte // reusable buffer for batching text copies in Scan
+	textInline   [256]byte
 	colNameBuf   []byte // reusable scratch for gathering column names in Columns
 	err          error
 	closed       bool
@@ -65,7 +67,9 @@ type Rows struct {
 // closes a result twice (defer plus an explicit Close is common) would
 // otherwise close whichever later query reused the object.
 func newRows(ptr uintptr) *Rows {
-	return &Rows{ptr: ptr, chunkMax: firstChunkRows, textBuf: make([]byte, 0, 256)}
+	r := &Rows{ptr: ptr, chunkMax: firstChunkRows}
+	r.textBuf = r.textInline[:0]
+	return r
 }
 
 func (r *Rows) fail(err error) {
@@ -302,49 +306,57 @@ func (r *Rows) Bool(i int) bool {
 }
 
 // Timestamp returns the current row's TIMESTAMP value at column i. An INTEGER
-// is read as nanoseconds since the Unix epoch and TEXT is parsed the way the
-// engine does. Anything else gives the zero time.
+// is read as nanoseconds since the Unix epoch and TEXT is parsed in the
+// common forms the engine accepts (see parseTimestamp). Anything else, and
+// text in no known form, gives the zero time; Scan reports it as an error.
 func (r *Rows) Timestamp(i int) time.Time {
+	t, _ := r.timestamp(i)
+	return t
+}
+
+func (r *Rows) timestamp(i int) (time.Time, bool) {
 	off, tag := r.value(i)
 	switch tag {
 	case typeTimestamp, typeInteger:
 		nanos := int64(binary.LittleEndian.Uint64(r.chunk[off:]))
-		return time.Unix(nanos/1e9, nanos%1e9).UTC()
+		return time.Unix(nanos/1e9, nanos%1e9).UTC(), true
 	case typeText:
 		return parseTimestamp(packedText(r.chunk, off))
 	}
-	return time.Time{}
+	return time.Time{}, false
 }
 
-// timestampLayouts mirrors the engine's TIMESTAMP_FORMATS. Layouts without a
-// zone are read as UTC, as the engine does.
+// timestampLayouts covers the forms the engine's parse_timestamp accepts:
+// RFC 3339 with Z or an offset in any spelling, ISO and SQL style with an
+// optional fraction, a bare date, and the slash form with a time. Layouts
+// without a zone are read as UTC, as the engine does. The engine also takes
+// single digit fields and second 60; this parser does not.
 var timestampLayouts = [...]string{
 	"2006-01-02T15:04:05.999999999Z07:00",
+	"2006-01-02T15:04:05.999999999-0700",
+	"2006-01-02T15:04:05.999999999 Z07:00",
 	"2006-01-02T15:04:05.999999999",
 	"2006-01-02 15:04:05.999999999",
 	"2006-01-02",
 	"2006/01/02 15:04:05",
-	"2006/01/02",
-	"01/02/2006",
-	"02/01/2006",
 }
 
-// parseTimestamp parses the text forms the engine's parse_timestamp accepts.
-// A time without a date takes today's date, as in the engine.
-func parseTimestamp(s string) time.Time {
+// parseTimestamp parses s with timestampLayouts. A time without a date takes
+// today's date, as in the engine.
+func parseTimestamp(s string) (time.Time, bool) {
 	s = strings.TrimSpace(s)
 	for _, layout := range timestampLayouts {
 		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC()
+			return t.UTC(), true
 		}
 	}
 	for _, layout := range [...]string{"15:04:05.999999999", "15:04"} {
 		if t, err := time.Parse(layout, s); err == nil {
 			y, m, d := time.Now().UTC().Date()
-			return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+			return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC), true
 		}
 	}
-	return time.Time{}
+	return time.Time{}, false
 }
 
 // formatText renders a non-text column of the current row as the engine's
@@ -513,8 +525,10 @@ func (r *Rows) Scan(dest ...any) error {
 		case *time.Time:
 			if isNull {
 				*p = time.Time{}
+			} else if t, ok := r.timestamp(i); ok {
+				*p = t
 			} else {
-				*p = r.Timestamp(i)
+				return errNotTimestamp
 			}
 		case *[]byte:
 			if isNull {
@@ -561,9 +575,11 @@ func (r *Rows) Scan(dest ...any) error {
 			if isNull {
 				p.Time = time.Time{}
 				p.Valid = false
-			} else {
-				p.Time = r.Timestamp(i)
+			} else if t, ok := r.timestamp(i); ok {
+				p.Time = t
 				p.Valid = true
+			} else {
+				return errNotTimestamp
 			}
 		case *any:
 			switch tag {

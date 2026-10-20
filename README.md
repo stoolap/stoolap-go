@@ -415,7 +415,7 @@ tx.Commit()
 | JSON | `string` | `string`, `sql.NullString` |
 | VECTOR/BLOB | `[]byte` | `[]byte` (nil for NULL) |
 
-Scanning any column into a `string` gives the engine's text form, the same as `CAST(x AS TEXT)`. Scanning TEXT into `time.Time` parses it the way the engine does.
+A nil `[]byte` binds as NULL; an empty one binds as an empty value. Scanning any column into a `string` gives the engine's text form, the same as `CAST(x AS TEXT)` except that a float whose shortest representation ends in an exact decimal tie may round its last digit differently. Scanning TEXT into `time.Time` accepts RFC 3339 with Z or an offset, ISO and SQL style with an optional fraction, a bare date, and `YYYY/MM/DD HH:MM:SS`; text in another form is a Scan error.
 
 ## Error Handling
 
