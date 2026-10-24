@@ -30,6 +30,7 @@ package wasm
 
 import (
 	"context"
+	"database/sql"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -43,12 +44,8 @@ import (
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
 
-// Status codes from the C API.
-const (
-	stoolapOK   = 0
-	stoolapRow  = 100
-	stoolapDone = 101
-)
+// Status code from the C API.
+const stoolapOK = 0
 
 // Type codes from the C API.
 const (
@@ -70,10 +67,27 @@ const (
 
 // StoolapValue size in wasm32 (ILP32).
 // Layout: int32 type(4) + int32 pad(4) + union(16) = 24 bytes.
+// Text and blob payloads: pointer(4) at offset 8, int64 length at offset 16.
 const stoolapValueSize = 24
 
-// Arena size: 256KB pre-allocated in WASM memory. No malloc/free during operations.
-const arenaSize = 256 * 1024
+// StoolapNamedParam size in wasm32: pointer name(4) + int32 name_len(4) +
+// padding to the 8 byte alignment of the value(8) + StoolapValue(24).
+const stoolapNamedParamSize = 40
+
+// Arena: pre-allocated in WASM memory, reset before every operation and grown
+// when an operation needs more. The first arenaSlots bytes are three 8 byte
+// output slots for pointer, length and count results.
+const (
+	arenaInitSize = 256 * 1024
+	arenaSlots    = 24
+)
+
+var (
+	errArena                = errors.New("stoolap-wasm: arena overflow")
+	errEmptyParamName       = errors.New("stoolap-wasm: named parameter has an empty name")
+	errUnsupportedParamType = errors.New("stoolap-wasm: unsupported parameter type")
+	errBatchRowLength       = errors.New("stoolap-wasm: batch rows must all have the same number of parameters")
+)
 
 // Engine manages a wazero WASM runtime with an instantiated stoolap module.
 // All WASM calls are serialized through a mutex since WASM is single-threaded.
@@ -88,7 +102,7 @@ type Engine struct {
 	mod     api.Module
 	mem     api.Memory
 
-	// Memory management (only used for arena init and overflow)
+	// Memory management (only used for the arena)
 	malloc api.Function
 	free   api.Function
 
@@ -97,61 +111,61 @@ type Engine struct {
 	arenaCap uint32 // total capacity
 	arenaOff uint32 // current bump offset
 
-	// Fixed slots within arena (first 16 bytes)
-	outSlotA uint32 // 8 bytes at arenaPtr+0 (for i32/i64 output params)
+	// Fixed slots within arena (first arenaSlots bytes)
+	outSlotA uint32 // 8 bytes at arenaPtr+0
 	outSlotB uint32 // 8 bytes at arenaPtr+8
+	outSlotC uint32 // 8 bytes at arenaPtr+16
 
 	// Go-side reusable buffer for building StoolapValue arrays
 	paramBuf []byte
 
 	// Pre-allocated call stack for CallWithStack (avoids allocation per WASM call).
-	// Max stoolap FFI function has 5 params + 1 result = 6 slots. Use 8 for safety.
+	// The widest stoolap FFI function has 7 params and 1 result.
 	stack [8]uint64
 
 	// FFI functions
-	fnVersion          api.Function
-	fnOpen             api.Function
-	fnOpenInMemory     api.Function
-	fnClone            api.Function
-	fnClose            api.Function
-	fnErrmsg           api.Function
-	fnExec             api.Function
-	fnExecParams       api.Function
-	fnQuery            api.Function
-	fnQueryParams      api.Function
-	fnPrepare          api.Function
-	fnStmtExec         api.Function
-	fnStmtQuery        api.Function
-	fnStmtFinalize     api.Function
-	fnStmtErrmsg       api.Function
-	fnBegin            api.Function
-	fnBeginIsolation   api.Function
-	fnTxExec           api.Function
-	fnTxExecParams     api.Function
-	fnTxQuery          api.Function
-	fnTxQueryParams    api.Function
-	fnTxStmtExec       api.Function
-	fnTxStmtQuery      api.Function
-	fnTxCommit         api.Function
-	fnTxRollback       api.Function
-	fnTxErrmsg         api.Function
-	fnRowsNext         api.Function
-	fnRowsColCount     api.Function
-	fnRowsColName      api.Function
-	fnRowsColType      api.Function
-	fnRowsColInt64     api.Function
-	fnRowsColDouble    api.Function
-	fnRowsColText      api.Function
-	fnRowsColBool      api.Function
-	fnRowsColTimestamp api.Function
-	fnRowsColBlob      api.Function
-	fnRowsColIsNull    api.Function
-	fnRowsAffected     api.Function
-	fnRowsClose        api.Function
-	fnRowsErrmsg       api.Function
-	fnRowsFetchAll     api.Function
-	fnBufferFree       api.Function
-	fnStringFree       api.Function
+	fnVersion           api.Function
+	fnOpen              api.Function
+	fnOpenInMemory      api.Function
+	fnClone             api.Function
+	fnClose             api.Function
+	fnErrmsg            api.Function
+	fnExec              api.Function
+	fnExecParams        api.Function
+	fnExecNamed         api.Function
+	fnQuery             api.Function
+	fnQueryParams       api.Function
+	fnQueryNamed        api.Function
+	fnQueryParamsAll    api.Function
+	fnQueryNamedAll     api.Function
+	fnPrepare           api.Function
+	fnStmtExec          api.Function
+	fnStmtExecNamed     api.Function
+	fnStmtExecBatch     api.Function
+	fnStmtQuery         api.Function
+	fnStmtQueryNamed    api.Function
+	fnStmtQueryAll      api.Function
+	fnStmtQueryNamedAll api.Function
+	fnStmtFinalize      api.Function
+	fnStmtErrmsg        api.Function
+	fnBegin             api.Function
+	fnBeginIsolation    api.Function
+	fnTxExec            api.Function
+	fnTxExecParams      api.Function
+	fnTxExecNamed       api.Function
+	fnTxQuery           api.Function
+	fnTxQueryParams     api.Function
+	fnTxQueryNamed      api.Function
+	fnTxStmtExec        api.Function
+	fnTxStmtExecNamed   api.Function
+	fnTxCommit          api.Function
+	fnTxRollback        api.Function
+	fnTxErrmsg          api.Function
+	fnRowsFetchChunk    api.Function
+	fnRowsFetchAll      api.Function
+	fnRowsClose         api.Function
+	fnRowsErrmsg        api.Function
+	fnBufferFree        api.Function
 }
 
 // NewEngine creates a new WASM engine from the given stoolap WASM binary.
@@ -197,68 +211,70 @@ func newEngine(ctx context.Context, wasmBytes []byte, rootDir *string) (*Engine,
 	e.malloc = mod.ExportedFunction("__wbindgen_malloc")
 	e.free = mod.ExportedFunction("__wbindgen_free")
 	if e.malloc == nil || e.free == nil {
+		r.Close(ctx)
 		return nil, errors.New("stoolap-wasm: missing malloc/free exports")
 	}
 
-	// Resolve FFI functions
-	resolve := func(name string) api.Function { return mod.ExportedFunction(name) }
-	e.fnVersion = resolve("stoolap_version")
-	e.fnOpen = resolve("stoolap_open")
-	e.fnOpenInMemory = resolve("stoolap_open_in_memory")
-	e.fnClone = resolve("stoolap_clone")
-	e.fnClose = resolve("stoolap_close")
-	e.fnErrmsg = resolve("stoolap_errmsg")
-	e.fnExec = resolve("stoolap_exec")
-	e.fnExecParams = resolve("stoolap_exec_params")
-	e.fnQuery = resolve("stoolap_query")
-	e.fnQueryParams = resolve("stoolap_query_params")
-	e.fnPrepare = resolve("stoolap_prepare")
-	e.fnStmtExec = resolve("stoolap_stmt_exec")
-	e.fnStmtQuery = resolve("stoolap_stmt_query")
-	e.fnStmtFinalize = resolve("stoolap_stmt_finalize")
-	e.fnStmtErrmsg = resolve("stoolap_stmt_errmsg")
-	e.fnBegin = resolve("stoolap_begin")
-	e.fnBeginIsolation = resolve("stoolap_begin_with_isolation")
-	e.fnTxExec = resolve("stoolap_tx_exec")
-	e.fnTxExecParams = resolve("stoolap_tx_exec_params")
-	e.fnTxQuery = resolve("stoolap_tx_query")
-	e.fnTxQueryParams = resolve("stoolap_tx_query_params")
-	e.fnTxStmtExec = resolve("stoolap_tx_stmt_exec")
-	e.fnTxStmtQuery = resolve("stoolap_tx_stmt_query")
-	e.fnTxCommit = resolve("stoolap_tx_commit")
-	e.fnTxRollback = resolve("stoolap_tx_rollback")
-	e.fnTxErrmsg = resolve("stoolap_tx_errmsg")
-	e.fnRowsNext = resolve("stoolap_rows_next")
-	e.fnRowsColCount = resolve("stoolap_rows_column_count")
-	e.fnRowsColName = resolve("stoolap_rows_column_name")
-	e.fnRowsColType = resolve("stoolap_rows_column_type")
-	e.fnRowsColInt64 = resolve("stoolap_rows_column_int64")
-	e.fnRowsColDouble = resolve("stoolap_rows_column_double")
-	e.fnRowsColText = resolve("stoolap_rows_column_text")
-	e.fnRowsColBool = resolve("stoolap_rows_column_bool")
-	e.fnRowsColTimestamp = resolve("stoolap_rows_column_timestamp")
-	e.fnRowsColBlob = resolve("stoolap_rows_column_blob")
-	e.fnRowsColIsNull = resolve("stoolap_rows_column_is_null")
-	e.fnRowsAffected = resolve("stoolap_rows_affected")
-	e.fnRowsClose = resolve("stoolap_rows_close")
-	e.fnRowsErrmsg = resolve("stoolap_rows_errmsg")
-	e.fnRowsFetchAll = resolve("stoolap_rows_fetch_all")
-	e.fnBufferFree = resolve("stoolap_buffer_free")
-	e.fnStringFree = resolve("stoolap_string_free")
-
-	// Allocate the arena — one malloc call, used for everything.
-	res, err := e.malloc.Call(ctx, arenaSize, 8)
-	if err != nil {
-		return nil, fmt.Errorf("stoolap-wasm: alloc arena: %w", err)
+	// Resolve FFI functions. Every one is required: a binary that lacks one
+	// predates the entry points this driver is written against.
+	for _, b := range []struct {
+		name string
+		fn   *api.Function
+	}{
+		{"stoolap_version", &e.fnVersion},
+		{"stoolap_open", &e.fnOpen},
+		{"stoolap_open_in_memory", &e.fnOpenInMemory},
+		{"stoolap_clone", &e.fnClone},
+		{"stoolap_close", &e.fnClose},
+		{"stoolap_errmsg", &e.fnErrmsg},
+		{"stoolap_exec", &e.fnExec},
+		{"stoolap_exec_params", &e.fnExecParams},
+		{"stoolap_exec_named", &e.fnExecNamed},
+		{"stoolap_query", &e.fnQuery},
+		{"stoolap_query_params", &e.fnQueryParams},
+		{"stoolap_query_named", &e.fnQueryNamed},
+		{"stoolap_query_params_all", &e.fnQueryParamsAll},
+		{"stoolap_query_named_all", &e.fnQueryNamedAll},
+		{"stoolap_prepare", &e.fnPrepare},
+		{"stoolap_stmt_exec", &e.fnStmtExec},
+		{"stoolap_stmt_exec_named", &e.fnStmtExecNamed},
+		{"stoolap_stmt_exec_batch", &e.fnStmtExecBatch},
+		{"stoolap_stmt_query", &e.fnStmtQuery},
+		{"stoolap_stmt_query_named", &e.fnStmtQueryNamed},
+		{"stoolap_stmt_query_all", &e.fnStmtQueryAll},
+		{"stoolap_stmt_query_named_all", &e.fnStmtQueryNamedAll},
+		{"stoolap_stmt_finalize", &e.fnStmtFinalize},
+		{"stoolap_stmt_errmsg", &e.fnStmtErrmsg},
+		{"stoolap_begin", &e.fnBegin},
+		{"stoolap_begin_with_isolation", &e.fnBeginIsolation},
+		{"stoolap_tx_exec", &e.fnTxExec},
+		{"stoolap_tx_exec_params", &e.fnTxExecParams},
+		{"stoolap_tx_exec_named", &e.fnTxExecNamed},
+		{"stoolap_tx_query", &e.fnTxQuery},
+		{"stoolap_tx_query_params", &e.fnTxQueryParams},
+		{"stoolap_tx_query_named", &e.fnTxQueryNamed},
+		{"stoolap_tx_stmt_exec", &e.fnTxStmtExec},
+		{"stoolap_tx_stmt_exec_named", &e.fnTxStmtExecNamed},
+		{"stoolap_tx_commit", &e.fnTxCommit},
+		{"stoolap_tx_rollback", &e.fnTxRollback},
+		{"stoolap_tx_errmsg", &e.fnTxErrmsg},
+		{"stoolap_rows_fetch_chunk", &e.fnRowsFetchChunk},
+		{"stoolap_rows_fetch_all", &e.fnRowsFetchAll},
+		{"stoolap_rows_close", &e.fnRowsClose},
+		{"stoolap_rows_errmsg", &e.fnRowsErrmsg},
+		{"stoolap_buffer_free", &e.fnBufferFree},
+	} {
+		*b.fn = mod.ExportedFunction(b.name)
+		if *b.fn == nil {
+			r.Close(ctx)
+			return nil, fmt.Errorf("stoolap-wasm: the WASM binary does not export %s; build it from stoolap 0.5.0 or newer", b.name)
+		}
 	}
-	e.arenaPtr = uint32(res[0])
-	e.arenaCap = arenaSize
 
-	// Reserve first 16 bytes for output parameter slots.
-	e.outSlotA = e.arenaPtr
-	e.outSlotB = e.arenaPtr + 8
-	e.arenaOff = 16
-
+	if err := e.arenaReserve(ctx, arenaInitSize-arenaSlots-16); err != nil {
+		r.Close(ctx)
+		return nil, err
+	}
 	return e, nil
 }
 
@@ -318,6 +334,20 @@ func (e *Engine) call5(ctx context.Context, fn api.Function, a, b, c, d, f uint6
 	return e.stack[0]
 }
 
+// call6 calls with 6 params, returns result[0].
+func (e *Engine) call6(ctx context.Context, fn api.Function, a, b, c, d, f, g uint64) uint64 {
+	e.stack[0], e.stack[1], e.stack[2], e.stack[3], e.stack[4], e.stack[5] = a, b, c, d, f, g
+	fn.CallWithStack(ctx, e.stack[:])
+	return e.stack[0]
+}
+
+// call7 calls with 7 params, returns result[0].
+func (e *Engine) call7(ctx context.Context, fn api.Function, a, b, c, d, f, g, h uint64) uint64 {
+	e.stack[0], e.stack[1], e.stack[2], e.stack[3], e.stack[4], e.stack[5], e.stack[6] = a, b, c, d, f, g, h
+	fn.CallWithStack(ctx, e.stack[:])
+	return e.stack[0]
+}
+
 // callVoid calls with 1 param, ignores result.
 func (e *Engine) callVoid1(ctx context.Context, fn api.Function, a uint64) {
 	e.stack[0] = a
@@ -336,17 +366,44 @@ func (e *Engine) Version(ctx context.Context) string {
 
 // arenaReset resets the arena offset past the fixed output slots.
 func (e *Engine) arenaReset() {
-	e.arenaOff = 16
+	e.arenaOff = arenaSlots
 }
 
-// arenaAlloc bumps the arena pointer by size (with alignment).
-// Returns the WASM pointer. Panics if arena overflows (should never happen for normal queries).
+// arenaReserve makes sure the arena can hold n more bytes and grows it when
+// it cannot. Growing moves the arena, and the output slots with it, so it
+// runs before anything for the operation is written.
+func (e *Engine) arenaReserve(ctx context.Context, n uint32) error {
+	need := arenaSlots + n + 16 // alignment slack
+	if need <= e.arenaCap {
+		return nil
+	}
+	newCap := max(e.arenaCap, arenaInitSize)
+	for newCap < need {
+		newCap *= 2
+	}
+	res, err := e.malloc.Call(ctx, uint64(newCap), 8)
+	if err != nil {
+		return fmt.Errorf("stoolap-wasm: alloc arena: %w", err)
+	}
+	if e.arenaPtr != 0 {
+		e.free.Call(ctx, uint64(e.arenaPtr), uint64(e.arenaCap), 8)
+	}
+	e.arenaPtr = uint32(res[0])
+	e.arenaCap = newCap
+	e.outSlotA = e.arenaPtr
+	e.outSlotB = e.arenaPtr + 8
+	e.outSlotC = e.arenaPtr + 16
+	e.arenaOff = arenaSlots
+	return nil
+}
+
+// arenaAlloc bumps the arena pointer by size (with alignment) and returns
+// the WASM pointer, or 0 when the arena is full.
 func (e *Engine) arenaAlloc(size, align uint32) uint32 {
-	// Align up
 	off := (e.arenaOff + align - 1) &^ (align - 1)
 	end := off + size
 	if end > e.arenaCap {
-		return 0 // overflow — caller should fall back to malloc
+		return 0
 	}
 	e.arenaOff = end
 	return e.arenaPtr + off
@@ -369,25 +426,6 @@ func (e *Engine) writeSQL(s string) uint32 {
 	copy(dst, unsafe.Slice(unsafe.StringData(s), len(s)))
 	dst[len(s)] = 0
 	return ptr
-}
-
-// writeSQLFallback writes SQL to arena, falls back to malloc for oversized strings.
-func (e *Engine) writeSQLFallback(ctx context.Context, s string) (ptr uint32, mustFree bool) {
-	ptr = e.writeSQL(s)
-	if ptr != 0 {
-		return ptr, false
-	}
-	// Arena overflow — malloc (rare)
-	n := uint64(len(s) + 1)
-	res, err := e.malloc.Call(ctx, n, 1)
-	if err != nil {
-		return 0, false
-	}
-	ptr = uint32(res[0])
-	dst, _ := e.mem.Read(ptr, uint32(n))
-	copy(dst, unsafe.Slice(unsafe.StringData(s), len(s)))
-	dst[len(s)] = 0
-	return ptr, true
 }
 
 // readCString reads a NUL-terminated C string from WASM memory.
@@ -432,132 +470,259 @@ func (e *Engine) readI64(ptr uint32) int64 {
 	return int64(binary.LittleEndian.Uint64(data))
 }
 
+// copyOut copies n bytes at ptr out of WASM memory into a Go slice.
+func (e *Engine) copyOut(ptr uint32, n int64) ([]byte, bool) {
+	if n < 0 || n > math.MaxUint32 {
+		return nil, false
+	}
+	view, ok := e.mem.Read(ptr, uint32(n))
+	if !ok {
+		return nil, false
+	}
+	buf := make([]byte, len(view))
+	copy(buf, view)
+	return buf, true
+}
+
 // ─── Error helpers ──────────────────────────────────────────────────────────
 
-func (e *Engine) errFromDB(ctx context.Context, dbPtr uint32) error {
-	res, _ := e.fnErrmsg.Call(ctx, uint64(dbPtr))
-	msg := e.readCString(uint32(res[0]))
+// errFrom reads the last error of handle through one of the stoolap_*_errmsg
+// entry points.
+func (e *Engine) errFrom(ctx context.Context, errmsg api.Function, handle uint32) error {
+	msg := e.readCString(uint32(e.call1(ctx, errmsg, uint64(handle))))
 	if msg == "" {
 		return errors.New("stoolap-wasm: unknown error")
 	}
 	return errors.New(msg)
 }
 
-func (e *Engine) errFromTx(ctx context.Context, txPtr uint32) error {
-	res, _ := e.fnTxErrmsg.Call(ctx, uint64(txPtr))
-	msg := e.readCString(uint32(res[0]))
-	if msg == "" {
-		return errors.New("stoolap-wasm: unknown transaction error")
-	}
-	return errors.New(msg)
-}
-
-func (e *Engine) errFromStmt(ctx context.Context, stmtPtr uint32) error {
-	res, _ := e.fnStmtErrmsg.Call(ctx, uint64(stmtPtr))
-	msg := e.readCString(uint32(res[0]))
-	if msg == "" {
-		return errors.New("stoolap-wasm: unknown statement error")
-	}
-	return errors.New(msg)
-}
-
 // ─── Parameter encoding (arena-based, zero malloc) ──────────────────────────
 
-// writeParams encodes Go values into a WASM StoolapValue array in the arena.
-// String/blob data is also written into the arena. No malloc calls.
-// Returns the WASM pointer to the array. Arena is reset by caller.
-func (e *Engine) writeParams(ctx context.Context, args []any) (uint32, error) {
-	n := len(args)
+// stage resets the arena and writes the SQL text and the parameters of one
+// call into it. Named parameters are used when named is not empty, otherwise
+// args. The caller holds e.mu.
+func (e *Engine) stage(ctx context.Context, query string, args []any, named []sql.NamedArg) (sqlPtr, paramsPtr uint32, err error) {
+	e.arenaReset()
+	if err = e.arenaReserve(ctx, uint32(len(query))+1+paramsSize(args, named)); err != nil {
+		return 0, 0, err
+	}
+	if sqlPtr = e.writeSQL(query); sqlPtr == 0 {
+		return 0, 0, errArena
+	}
+	paramsPtr, err = e.writeParams(args, named)
+	return sqlPtr, paramsPtr, err
+}
+
+// stageParams is stage for prepared statements, which carry no SQL text.
+func (e *Engine) stageParams(ctx context.Context, args []any, named []sql.NamedArg) (uint32, error) {
+	e.arenaReset()
+	if err := e.arenaReserve(ctx, paramsSize(args, named)); err != nil {
+		return 0, err
+	}
+	return e.writeParams(args, named)
+}
+
+// paramsSize returns the arena bytes the StoolapValue or StoolapNamedParam
+// array for the parameters needs, payloads and alignment included.
+func paramsSize(args []any, named []sql.NamedArg) uint32 {
+	n := uint32(len(args)) * stoolapValueSize
+	if len(named) > 0 {
+		n = uint32(len(named)) * stoolapNamedParamSize
+	}
+	return n + payloadsSize(args, named) + 8
+}
+
+// payloadsSize returns the bytes the text and blob payloads, and the names,
+// of the parameters take beside their array.
+func payloadsSize(args []any, named []sql.NamedArg) uint32 {
+	var n uint32
+	if len(named) > 0 {
+		for _, a := range named {
+			n += uint32(len(a.Name)) + payloadSize(a.Value)
+		}
+		return n
+	}
+	for _, a := range args {
+		n += payloadSize(a)
+	}
+	return n
+}
+
+// payloadSize returns the bytes a text or blob parameter writes beside its
+// StoolapValue.
+func payloadSize(arg any) uint32 {
+	switch v := arg.(type) {
+	case string:
+		return uint32(len(v))
+	case []byte:
+		return uint32(len(v))
+	}
+	return 0
+}
+
+// staging returns the zeroed Go-side buffer the StoolapValue array is built in
+// before one write into WASM memory.
+func (e *Engine) staging(size int) []byte {
+	if cap(e.paramBuf) < size {
+		e.paramBuf = make([]byte, size)
+	}
+	buf := e.paramBuf[:size]
+	clear(buf)
+	return buf
+}
+
+// payloadWriter copies text and blob payloads into the arena behind the
+// parameter array and hands out their WASM pointers. An empty payload points
+// at empty: the engine reads pointer 0 as SQL NULL, so it must not be 0.
+type payloadWriter struct {
+	mem   api.Memory
+	off   uint32
+	empty uint32
+}
+
+func (w *payloadWriter) write(b []byte) uint32 {
+	if len(b) == 0 {
+		return w.empty
+	}
+	dst, _ := w.mem.Read(w.off, uint32(len(b)))
+	copy(dst, b)
+	ptr := w.off
+	w.off += uint32(len(b))
+	return ptr
+}
+
+// encodeValue writes one StoolapValue for arg into buf[0:stoolapValueSize].
+func encodeValue(buf []byte, arg any, w *payloadWriter) error {
+	switch v := arg.(type) {
+	case nil:
+		binary.LittleEndian.PutUint32(buf, typeNull)
+	case int64:
+		binary.LittleEndian.PutUint32(buf, typeInteger)
+		binary.LittleEndian.PutUint64(buf[8:], uint64(v))
+	case int:
+		binary.LittleEndian.PutUint32(buf, typeInteger)
+		binary.LittleEndian.PutUint64(buf[8:], uint64(v))
+	case int32:
+		binary.LittleEndian.PutUint32(buf, typeInteger)
+		binary.LittleEndian.PutUint64(buf[8:], uint64(v))
+	case float64:
+		binary.LittleEndian.PutUint32(buf, typeFloat)
+		binary.LittleEndian.PutUint64(buf[8:], math.Float64bits(v))
+	case float32:
+		binary.LittleEndian.PutUint32(buf, typeFloat)
+		binary.LittleEndian.PutUint64(buf[8:], math.Float64bits(float64(v)))
+	case bool:
+		binary.LittleEndian.PutUint32(buf, typeBoolean)
+		if v {
+			binary.LittleEndian.PutUint32(buf[8:], 1)
+		}
+	case string:
+		binary.LittleEndian.PutUint32(buf, typeText)
+		binary.LittleEndian.PutUint32(buf[8:], w.write(unsafe.Slice(unsafe.StringData(v), len(v))))
+		binary.LittleEndian.PutUint64(buf[16:], uint64(len(v)))
+	case []byte:
+		if v == nil {
+			binary.LittleEndian.PutUint32(buf, typeNull)
+			break
+		}
+		binary.LittleEndian.PutUint32(buf, typeBlob)
+		binary.LittleEndian.PutUint32(buf[8:], w.write(v))
+		binary.LittleEndian.PutUint64(buf[16:], uint64(len(v)))
+	case time.Time:
+		binary.LittleEndian.PutUint32(buf, typeTimestamp)
+		binary.LittleEndian.PutUint64(buf[8:], uint64(v.UnixNano()))
+	default:
+		return errUnsupportedParamType
+	}
+	return nil
+}
+
+// writeParams encodes the parameters into a StoolapValue array, or a
+// StoolapNamedParam array when named is not empty, in the arena. Payloads
+// follow the array. Returns the WASM pointer of the array, 0 for no
+// parameters. The arena must already hold paramsSize bytes.
+func (e *Engine) writeParams(args []any, named []sql.NamedArg) (uint32, error) {
+	n, slot := len(args), stoolapValueSize
+	if len(named) > 0 {
+		n, slot = len(named), stoolapNamedParamSize
+	}
 	if n == 0 {
 		return 0, nil
 	}
-
-	totalSize := uint32(n * stoolapValueSize)
-
-	// Ensure Go-side buffer is large enough
-	if cap(e.paramBuf) < int(totalSize) {
-		e.paramBuf = make([]byte, totalSize)
-	}
-	buf := e.paramBuf[:totalSize]
-	// Zero the buffer
-	for i := range buf {
-		buf[i] = 0
-	}
-
-	// First pass: compute total string/blob data needed
-	var strDataSize uint32
-	for _, arg := range args {
-		switch v := arg.(type) {
-		case string:
-			strDataSize += uint32(len(v))
-		case []byte:
-			strDataSize += uint32(len(v))
-		}
-	}
-
-	// Allocate array + string data in arena contiguously
-	arrayPtr := e.arenaAlloc(totalSize, 8)
+	buf := e.staging(n * slot)
+	arrayPtr := e.arenaAlloc(uint32(n*slot), 8)
 	if arrayPtr == 0 {
-		return 0, errors.New("stoolap-wasm: arena overflow for params")
+		return 0, errArena
 	}
-	// An empty TEXT or BLOB still needs a non-zero pointer: the engine reads
-	// pointer 0 as SQL NULL. Point it at the array; only the length is read.
-	strDataPtr := arrayPtr
-	if strDataSize > 0 {
-		strDataPtr = e.arenaAlloc(strDataSize, 1)
-		if strDataPtr == 0 {
-			return 0, errors.New("stoolap-wasm: arena overflow for param strings")
+	w := payloadWriter{mem: e.mem, empty: arrayPtr}
+	if dataSize := payloadsSize(args, named); dataSize > 0 {
+		if w.off = e.arenaAlloc(dataSize, 1); w.off == 0 {
+			return 0, errArena
 		}
 	}
-	strOff := strDataPtr
-
-	// Second pass: encode values
-	for i, arg := range args {
-		off := i * stoolapValueSize
-		if arg == nil {
-			binary.LittleEndian.PutUint32(buf[off:], typeNull)
-			continue
-		}
-		switch v := arg.(type) {
-		case int64:
-			binary.LittleEndian.PutUint32(buf[off:], typeInteger)
-			binary.LittleEndian.PutUint64(buf[off+8:], uint64(v))
-		case float64:
-			binary.LittleEndian.PutUint32(buf[off:], typeFloat)
-			binary.LittleEndian.PutUint64(buf[off+8:], math.Float64bits(v))
-		case bool:
-			binary.LittleEndian.PutUint32(buf[off:], typeBoolean)
-			if v {
-				binary.LittleEndian.PutUint32(buf[off+8:], 1)
+	if len(named) > 0 {
+		for i, a := range named {
+			if a.Name == "" {
+				return 0, errEmptyParamName
 			}
-		case string:
-			binary.LittleEndian.PutUint32(buf[off:], typeText)
-			binary.LittleEndian.PutUint32(buf[off+8:], strOff)
-			binary.LittleEndian.PutUint64(buf[off+16:], uint64(len(v)))
-			// Write string data directly to WASM memory
-			dst, _ := e.mem.Read(strOff, uint32(len(v)))
-			copy(dst, unsafe.Slice(unsafe.StringData(v), len(v)))
-			strOff += uint32(len(v))
-		case []byte:
-			if v == nil {
-				binary.LittleEndian.PutUint32(buf[off:], typeNull)
-				continue
+			s := buf[i*slot:]
+			binary.LittleEndian.PutUint32(s, w.write(unsafe.Slice(unsafe.StringData(a.Name), len(a.Name))))
+			binary.LittleEndian.PutUint32(s[4:], uint32(len(a.Name)))
+			if err := encodeValue(s[16:], a.Value, &w); err != nil {
+				return 0, err
 			}
-			binary.LittleEndian.PutUint32(buf[off:], typeBlob)
-			binary.LittleEndian.PutUint32(buf[off+8:], strOff)
-			binary.LittleEndian.PutUint64(buf[off+16:], uint64(len(v)))
-			dst, _ := e.mem.Read(strOff, uint32(len(v)))
-			copy(dst, v)
-			strOff += uint32(len(v))
-		case time.Time:
-			binary.LittleEndian.PutUint32(buf[off:], typeTimestamp)
-			binary.LittleEndian.PutUint64(buf[off+8:], uint64(v.UnixNano()))
-		default:
-			return 0, fmt.Errorf("stoolap-wasm: unsupported parameter type %T", arg)
+		}
+	} else {
+		for i, a := range args {
+			if err := encodeValue(buf[i*slot:], a, &w); err != nil {
+				return 0, err
+			}
 		}
 	}
-
-	// Write the encoded array to WASM memory
 	e.mem.Write(arrayPtr, buf)
 	return arrayPtr, nil
+}
+
+// stageBatch resets the arena and writes rows as one flat row-major
+// StoolapValue array for stoolap_stmt_exec_batch. It returns the array
+// pointer and the parameters per row. The caller holds e.mu.
+func (e *Engine) stageBatch(ctx context.Context, rows [][]any) (uint32, int, error) {
+	ppr := len(rows[0])
+	var dataSize uint32
+	for _, row := range rows {
+		if len(row) != ppr {
+			return 0, 0, errBatchRowLength
+		}
+		for _, a := range row {
+			dataSize += payloadSize(a)
+		}
+	}
+	e.arenaReset()
+	if ppr == 0 {
+		return 0, 0, nil
+	}
+	total := len(rows) * ppr * stoolapValueSize
+	if err := e.arenaReserve(ctx, uint32(total)+dataSize+8); err != nil {
+		return 0, 0, err
+	}
+	buf := e.staging(total)
+	arrayPtr := e.arenaAlloc(uint32(total), 8)
+	if arrayPtr == 0 {
+		return 0, 0, errArena
+	}
+	w := payloadWriter{mem: e.mem, empty: arrayPtr}
+	if dataSize > 0 {
+		if w.off = e.arenaAlloc(dataSize, 1); w.off == 0 {
+			return 0, 0, errArena
+		}
+	}
+	for ri, row := range rows {
+		for ci, a := range row {
+			if err := encodeValue(buf[(ri*ppr+ci)*stoolapValueSize:], a, &w); err != nil {
+				return 0, 0, err
+			}
+		}
+	}
+	e.mem.Write(arrayPtr, buf)
+	return arrayPtr, ppr, nil
 }

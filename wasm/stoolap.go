@@ -18,13 +18,16 @@ package wasm
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"errors"
-	"math"
-	"time"
+
+	"github.com/tetratelabs/wazero/api"
 )
 
-var errRowsClosed = errors.New("stoolap-wasm: rows are closed")
+var (
+	errDBClosed   = errors.New("stoolap-wasm: database is closed")
+	errStmtClosed = errors.New("stoolap-wasm: statement is closed")
+	errTxDone     = errors.New("stoolap-wasm: transaction has already been committed or rolled back")
+)
 
 // DB represents a stoolap database connection over WASM.
 type DB struct {
@@ -36,21 +39,14 @@ type DB struct {
 func (e *Engine) Open(ctx context.Context, dsn string) (*DB, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.arenaReset()
 
-	sqlPtr, mustFree := e.writeSQLFallback(ctx, dsn)
-	if sqlPtr == 0 {
-		return nil, errors.New("stoolap-wasm: failed to write DSN")
+	sqlPtr, _, err := e.stage(ctx, dsn, nil, nil)
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		if mustFree {
-			e.free.Call(ctx, uint64(sqlPtr), uint64(len(dsn)+1), 1)
-		}
-	}()
-
 	rc := e.call2(ctx, e.fnOpen, uint64(sqlPtr), uint64(e.outSlotA))
 	if int32(rc) != stoolapOK {
-		return nil, e.errFromDB(ctx, 0)
+		return nil, e.errFrom(ctx, e.fnErrmsg, 0)
 	}
 	return &DB{engine: e, ptr: e.readU32(e.outSlotA)}, nil
 }
@@ -62,7 +58,7 @@ func (e *Engine) OpenMemory(ctx context.Context) (*DB, error) {
 
 	rc := e.call1(ctx, e.fnOpenInMemory, uint64(e.outSlotA))
 	if int32(rc) != stoolapOK {
-		return nil, e.errFromDB(ctx, 0)
+		return nil, e.errFrom(ctx, e.fnErrmsg, 0)
 	}
 	return &DB{engine: e, ptr: e.readU32(e.outSlotA)}, nil
 }
@@ -88,172 +84,212 @@ func (db *DB) Clone(ctx context.Context) (*DB, error) {
 
 	rc := e.call2(ctx, e.fnClone, uint64(db.ptr), uint64(e.outSlotA))
 	if int32(rc) != stoolapOK {
-		return nil, e.errFromDB(ctx, db.ptr)
+		return nil, e.errFrom(ctx, e.fnErrmsg, db.ptr)
 	}
 	return &DB{engine: e, ptr: e.readU32(e.outSlotA)}, nil
 }
 
-// Exec executes a SQL statement without parameters.
-func (db *DB) Exec(ctx context.Context, query string) (sql.Result, error) {
-	e := db.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.arenaReset()
+// sqlEntry names the three ad hoc entry points of a handle (a database or a
+// transaction) for one operation: without parameters, with positional
+// parameters and with named parameters, plus where its errors are read.
+type sqlEntry struct {
+	plain, positional, named, errmsg api.Function
+}
 
-	sqlPtr, mustFree := e.writeSQLFallback(ctx, query)
-	if sqlPtr == 0 {
-		return nil, errors.New("stoolap-wasm: failed to write SQL")
+// execOn runs an ad hoc statement on handle and returns the rows affected.
+// The caller holds e.mu.
+func (e *Engine) execOn(ctx context.Context, fn sqlEntry, handle uint32, query string, args []any, named []sql.NamedArg) (sql.Result, error) {
+	sqlPtr, paramsPtr, err := e.stage(ctx, query, args, named)
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		if mustFree {
-			e.free.Call(ctx, uint64(sqlPtr), uint64(len(query)+1), 1)
-		}
-	}()
-
-	rc := e.call3(ctx, e.fnExec, uint64(db.ptr), uint64(sqlPtr), uint64(e.outSlotB))
+	var rc uint64
+	switch {
+	case len(named) > 0:
+		rc = e.call5(ctx, fn.named, uint64(handle), uint64(sqlPtr), uint64(paramsPtr), uint64(len(named)), uint64(e.outSlotB))
+	case len(args) > 0:
+		rc = e.call5(ctx, fn.positional, uint64(handle), uint64(sqlPtr), uint64(paramsPtr), uint64(len(args)), uint64(e.outSlotB))
+	default:
+		rc = e.call3(ctx, fn.plain, uint64(handle), uint64(sqlPtr), uint64(e.outSlotB))
+	}
 	if int32(rc) != stoolapOK {
-		return nil, e.errFromDB(ctx, db.ptr)
+		return nil, e.errFrom(ctx, fn.errmsg, handle)
 	}
 	return execResult(e.readI64(e.outSlotB)), nil
 }
 
-// ExecParams executes a SQL statement with parameters.
-func (db *DB) ExecParams(ctx context.Context, query string, args []any) (sql.Result, error) {
-	e := db.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.arenaReset()
-
-	sqlPtr, mustFree := e.writeSQLFallback(ctx, query)
-	if sqlPtr == 0 {
-		return nil, errors.New("stoolap-wasm: failed to write SQL")
-	}
-	defer func() {
-		if mustFree {
-			e.free.Call(ctx, uint64(sqlPtr), uint64(len(query)+1), 1)
-		}
-	}()
-
-	if len(args) == 0 {
-		rc := e.call3(ctx, e.fnExec, uint64(db.ptr), uint64(sqlPtr), uint64(e.outSlotB))
-		if int32(rc) != stoolapOK {
-			return nil, e.errFromDB(ctx, db.ptr)
-		}
-		return execResult(e.readI64(e.outSlotB)), nil
-	}
-
-	paramsPtr, err := e.writeParams(ctx, args)
+// queryOn runs an ad hoc query on handle and returns a chunked Rows over its
+// result. The caller holds e.mu.
+func (e *Engine) queryOn(ctx context.Context, fn sqlEntry, handle uint32, query string, args []any, named []sql.NamedArg) (*Rows, error) {
+	sqlPtr, paramsPtr, err := e.stage(ctx, query, args, named)
 	if err != nil {
 		return nil, err
 	}
-
-	rc := e.call5(ctx, e.fnExecParams, uint64(db.ptr), uint64(sqlPtr), uint64(paramsPtr), uint64(len(args)), uint64(e.outSlotB))
-	if int32(rc) != stoolapOK {
-		return nil, e.errFromDB(ctx, db.ptr)
+	var rc uint64
+	switch {
+	case len(named) > 0:
+		rc = e.call5(ctx, fn.named, uint64(handle), uint64(sqlPtr), uint64(paramsPtr), uint64(len(named)), uint64(e.outSlotA))
+	case len(args) > 0:
+		rc = e.call5(ctx, fn.positional, uint64(handle), uint64(sqlPtr), uint64(paramsPtr), uint64(len(args)), uint64(e.outSlotA))
+	default:
+		rc = e.call3(ctx, fn.plain, uint64(handle), uint64(sqlPtr), uint64(e.outSlotA))
 	}
-	return execResult(e.readI64(e.outSlotB)), nil
+	if int32(rc) != stoolapOK {
+		return nil, e.errFrom(ctx, fn.errmsg, handle)
+	}
+	return newRows(e, ctx, e.readU32(e.outSlotA)), nil
+}
+
+func (db *DB) execEntry() sqlEntry {
+	e := db.engine
+	return sqlEntry{plain: e.fnExec, positional: e.fnExecParams, named: e.fnExecNamed, errmsg: e.fnErrmsg}
+}
+
+func (db *DB) queryEntry() sqlEntry {
+	e := db.engine
+	return sqlEntry{plain: e.fnQuery, positional: e.fnQueryParams, named: e.fnQueryNamed, errmsg: e.fnErrmsg}
+}
+
+// Exec executes a SQL statement without parameters.
+func (db *DB) Exec(ctx context.Context, query string) (sql.Result, error) {
+	return db.ExecParams(ctx, query, nil)
+}
+
+// ExecParams executes a SQL statement with positional parameters ($1, ?).
+func (db *DB) ExecParams(ctx context.Context, query string, args []any) (sql.Result, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
+	e := db.engine
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.execOn(ctx, db.execEntry(), db.ptr, query, args, nil)
+}
+
+// ExecNamed executes a SQL statement with named parameters (:name).
+func (db *DB) ExecNamed(ctx context.Context, query string, args []sql.NamedArg) (sql.Result, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
+	e := db.engine
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.execOn(ctx, db.execEntry(), db.ptr, query, nil, args)
 }
 
 // Query executes a query that returns rows.
 func (db *DB) Query(ctx context.Context, query string) (*Rows, error) {
-	e := db.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.arenaReset()
-
-	sqlPtr, mustFree := e.writeSQLFallback(ctx, query)
-	if sqlPtr == 0 {
-		return nil, errors.New("stoolap-wasm: failed to write SQL")
-	}
-	defer func() {
-		if mustFree {
-			e.free.Call(ctx, uint64(sqlPtr), uint64(len(query)+1), 1)
-		}
-	}()
-
-	rc := e.call3(ctx, e.fnQuery, uint64(db.ptr), uint64(sqlPtr), uint64(e.outSlotA))
-	if int32(rc) != stoolapOK {
-		return nil, e.errFromDB(ctx, db.ptr)
-	}
-	rowsPtr := e.readU32(e.outSlotA)
-	n := int32(e.call1(ctx, e.fnRowsColCount, uint64(rowsPtr)))
-	return &Rows{engine: e, ptr: rowsPtr, ctx: ctx, colCount: int(n), colTypes: make([]int32, n)}, nil
+	return db.QueryParams(ctx, query, nil)
 }
 
-// QueryParams executes a query with parameters.
+// QueryParams executes a query with positional parameters ($1, ?).
 func (db *DB) QueryParams(ctx context.Context, query string, args []any) (*Rows, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	e := db.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.arenaReset()
+	return e.queryOn(ctx, db.queryEntry(), db.ptr, query, args, nil)
+}
 
-	sqlPtr, mustFree := e.writeSQLFallback(ctx, query)
-	if sqlPtr == 0 {
-		return nil, errors.New("stoolap-wasm: failed to write SQL")
+// QueryNamed executes a query with named parameters (:name).
+func (db *DB) QueryNamed(ctx context.Context, query string, args []sql.NamedArg) (*Rows, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
 	}
-	defer func() {
-		if mustFree {
-			e.free.Call(ctx, uint64(sqlPtr), uint64(len(query)+1), 1)
-		}
-	}()
+	e := db.engine
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.queryOn(ctx, db.queryEntry(), db.ptr, query, nil, args)
+}
 
-	var rc uint64
-	if len(args) == 0 {
-		rc = e.call3(ctx, e.fnQuery, uint64(db.ptr), uint64(sqlPtr), uint64(e.outSlotA))
-	} else {
-		paramsPtr, err := e.writeParams(ctx, args)
-		if err != nil {
-			return nil, err
-		}
-		rc = e.call5(ctx, e.fnQueryParams, uint64(db.ptr), uint64(sqlPtr), uint64(paramsPtr), uint64(len(args)), uint64(e.outSlotA))
+// QueryAll runs a query with positional parameters and returns every row in
+// one WASM call. There is no cursor to iterate or close.
+func (db *DB) QueryAll(ctx context.Context, query string, args []any) (*ResultSet, error) {
+	cols, rows, err := db.queryAllPacked(ctx, 0, query, args, nil)
+	if err != nil {
+		return nil, err
 	}
+	return &ResultSet{Columns: cols, Rows: rows}, nil
+}
+
+// QueryNamedAll runs a query with named parameters (:name) and returns every
+// row in one WASM call.
+func (db *DB) QueryNamedAll(ctx context.Context, query string, args []sql.NamedArg) (*ResultSet, error) {
+	cols, rows, err := db.queryAllPacked(ctx, 0, query, nil, args)
+	if err != nil {
+		return nil, err
+	}
+	return &ResultSet{Columns: cols, Rows: rows}, nil
+}
+
+// queryAllPacked runs stoolap_query_params_all, or the named variant, on db,
+// inside tx when tx is not 0, and decodes the packed result.
+func (db *DB) queryAllPacked(ctx context.Context, tx uint32, query string, args []any, named []sql.NamedArg) ([]string, [][]any, error) {
+	if db.ptr == 0 {
+		return nil, nil, errDBClosed
+	}
+	e := db.engine
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	sqlPtr, paramsPtr, err := e.stage(ctx, query, args, named)
+	if err != nil {
+		return nil, nil, err
+	}
+	fn, n := e.fnQueryParamsAll, len(args)
+	if len(named) > 0 {
+		fn, n = e.fnQueryNamedAll, len(named)
+	}
+	rc := e.call7(ctx, fn, uint64(db.ptr), uint64(tx), uint64(sqlPtr), uint64(paramsPtr), uint64(n),
+		uint64(e.outSlotA), uint64(e.outSlotB))
 	if int32(rc) != stoolapOK {
-		return nil, e.errFromDB(ctx, db.ptr)
+		return nil, nil, e.errFrom(ctx, e.fnErrmsg, db.ptr)
 	}
-	rowsPtr := e.readU32(e.outSlotA)
-	n := int32(e.call1(ctx, e.fnRowsColCount, uint64(rowsPtr)))
-	return &Rows{engine: e, ptr: rowsPtr, ctx: ctx, colCount: int(n), colTypes: make([]int32, n)}, nil
+	return e.decodePacked(e.readU32(e.outSlotA), e.readI64(e.outSlotB))
 }
 
 // Prepare creates a prepared statement.
 func (db *DB) Prepare(ctx context.Context, query string) (*Stmt, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	e := db.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.arenaReset()
 
-	sqlPtr, mustFree := e.writeSQLFallback(ctx, query)
-	if sqlPtr == 0 {
-		return nil, errors.New("stoolap-wasm: failed to write SQL")
+	sqlPtr, _, err := e.stage(ctx, query, nil, nil)
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		if mustFree {
-			e.free.Call(ctx, uint64(sqlPtr), uint64(len(query)+1), 1)
-		}
-	}()
-
 	rc := e.call3(ctx, e.fnPrepare, uint64(db.ptr), uint64(sqlPtr), uint64(e.outSlotA))
 	if int32(rc) != stoolapOK {
-		return nil, e.errFromDB(ctx, db.ptr)
+		return nil, e.errFrom(ctx, e.fnErrmsg, db.ptr)
 	}
-	return &Stmt{engine: e, ptr: e.readU32(e.outSlotA)}, nil
+	return &Stmt{engine: e, db: db, ptr: e.readU32(e.outSlotA)}, nil
 }
 
 // Begin starts a transaction.
 func (db *DB) Begin(ctx context.Context) (*Tx, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	e := db.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	rc := e.call2(ctx, e.fnBegin, uint64(db.ptr), uint64(e.outSlotA))
 	if int32(rc) != stoolapOK {
-		return nil, e.errFromDB(ctx, db.ptr)
+		return nil, e.errFrom(ctx, e.fnErrmsg, db.ptr)
 	}
-	return &Tx{engine: e, ptr: e.readU32(e.outSlotA)}, nil
+	return &Tx{engine: e, db: db, ptr: e.readU32(e.outSlotA)}, nil
 }
 
 // BeginTx starts a transaction with options.
 func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
+	if db.ptr == 0 {
+		return nil, errDBClosed
+	}
 	e := db.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -271,377 +307,183 @@ func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
 
 	rc := e.call3(ctx, e.fnBeginIsolation, uint64(db.ptr), isolation, uint64(e.outSlotA))
 	if int32(rc) != stoolapOK {
-		return nil, e.errFromDB(ctx, db.ptr)
+		return nil, e.errFrom(ctx, e.fnErrmsg, db.ptr)
 	}
-	return &Tx{engine: e, ptr: e.readU32(e.outSlotA)}, nil
-}
-
-// ─── Rows ───────────────────────────────────────────────────────────────────
-
-type Rows struct {
-	engine   *Engine
-	ptr      uint32
-	ctx      context.Context
-	cols     []string
-	colTypes []int32
-	colCount int
-	closed   bool
-	firstRow bool
-}
-
-func (r *Rows) Columns() []string {
-	if r.cols != nil {
-		return r.cols
-	}
-	e := r.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	r.cols = make([]string, r.colCount)
-	for i := range r.cols {
-		ptr := e.call2(r.ctx, e.fnRowsColName, uint64(r.ptr), uint64(i))
-		r.cols[i] = e.readCString(uint32(ptr))
-	}
-	return r.cols
-}
-
-func (r *Rows) Next() bool {
-	if r.closed {
-		return false
-	}
-	e := r.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	rc := e.call1(r.ctx, e.fnRowsNext, uint64(r.ptr))
-	if int32(rc) != stoolapRow {
-		return false
-	}
-	if !r.firstRow {
-		r.firstRow = true
-		for i := range r.colCount {
-			r.colTypes[i] = int32(e.call2(r.ctx, e.fnRowsColType, uint64(r.ptr), uint64(i)))
-		}
-	}
-	return true
-}
-
-func (r *Rows) Scan(dest ...any) error {
-	if r.closed {
-		return errRowsClosed
-	}
-	e := r.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	ctx := r.ctx
-	for i, d := range dest {
-		isNull := int32(e.call2(ctx, e.fnRowsColIsNull, uint64(r.ptr), uint64(i))) == 1
-
-		switch p := d.(type) {
-		case *int64:
-			if isNull {
-				*p = 0
-			} else {
-				*p = int64(e.call2(ctx, e.fnRowsColInt64, uint64(r.ptr), uint64(i)))
-			}
-		case *float64:
-			if isNull {
-				*p = 0
-			} else {
-				*p = math.Float64frombits(e.call2(ctx, e.fnRowsColDouble, uint64(r.ptr), uint64(i)))
-			}
-		case *string:
-			if isNull {
-				*p = ""
-			} else {
-				ptr := e.call3(ctx, e.fnRowsColText, uint64(r.ptr), uint64(i), 0)
-				*p = e.readCString(uint32(ptr))
-			}
-		case *bool:
-			if isNull {
-				*p = false
-			} else {
-				*p = int32(e.call2(ctx, e.fnRowsColBool, uint64(r.ptr), uint64(i))) != 0
-			}
-		case *time.Time:
-			if isNull {
-				*p = time.Time{}
-			} else {
-				nanos := int64(e.call2(ctx, e.fnRowsColTimestamp, uint64(r.ptr), uint64(i)))
-				*p = time.Unix(nanos/1e9, nanos%1e9).UTC()
-			}
-		case *[]byte:
-			if isNull {
-				*p = nil
-			} else {
-				blobPtr := uint32(e.call3(ctx, e.fnRowsColBlob, uint64(r.ptr), uint64(i), uint64(e.outSlotB)))
-				if blobPtr == 0 {
-					*p = nil
-				} else {
-					blobLen := e.readI64(e.outSlotB)
-					data, _ := e.mem.Read(blobPtr, uint32(blobLen))
-					cp := make([]byte, len(data))
-					copy(cp, data)
-					*p = cp
-				}
-			}
-		case *sql.NullString:
-			if isNull {
-				p.Valid = false
-			} else {
-				ptr := e.call3(ctx, e.fnRowsColText, uint64(r.ptr), uint64(i), 0)
-				p.String = e.readCString(uint32(ptr))
-				p.Valid = true
-			}
-		case *sql.NullInt64:
-			if isNull {
-				p.Valid = false
-			} else {
-				p.Int64 = int64(e.call2(ctx, e.fnRowsColInt64, uint64(r.ptr), uint64(i)))
-				p.Valid = true
-			}
-		case *sql.NullFloat64:
-			if isNull {
-				p.Valid = false
-			} else {
-				p.Float64 = math.Float64frombits(e.call2(ctx, e.fnRowsColDouble, uint64(r.ptr), uint64(i)))
-				p.Valid = true
-			}
-		case *sql.NullBool:
-			if isNull {
-				p.Valid = false
-			} else {
-				p.Bool = int32(e.call2(ctx, e.fnRowsColBool, uint64(r.ptr), uint64(i))) != 0
-				p.Valid = true
-			}
-		case *sql.NullTime:
-			if isNull {
-				p.Valid = false
-			} else {
-				nanos := int64(e.call2(ctx, e.fnRowsColTimestamp, uint64(r.ptr), uint64(i)))
-				p.Time = time.Unix(nanos/1e9, nanos%1e9).UTC()
-				p.Valid = true
-			}
-		case *any:
-			if isNull {
-				*p = nil
-			} else {
-				*p = r.readAny(e, ctx, i)
-			}
-		}
-	}
-	return nil
-}
-
-func (r *Rows) readAny(e *Engine, ctx context.Context, i int) any {
-	switch r.colTypes[i] {
-	case typeInteger:
-		return int64(e.call2(ctx, e.fnRowsColInt64, uint64(r.ptr), uint64(i)))
-	case typeFloat:
-		return math.Float64frombits(e.call2(ctx, e.fnRowsColDouble, uint64(r.ptr), uint64(i)))
-	case typeText, typeJSON:
-		ptr := e.call3(ctx, e.fnRowsColText, uint64(r.ptr), uint64(i), 0)
-		return e.readCString(uint32(ptr))
-	case typeBoolean:
-		return int32(e.call2(ctx, e.fnRowsColBool, uint64(r.ptr), uint64(i))) != 0
-	case typeTimestamp:
-		nanos := int64(e.call2(ctx, e.fnRowsColTimestamp, uint64(r.ptr), uint64(i)))
-		return time.Unix(nanos/1e9, nanos%1e9).UTC()
-	case typeBlob:
-		blobPtr := uint32(e.call3(ctx, e.fnRowsColBlob, uint64(r.ptr), uint64(i), uint64(e.outSlotB)))
-		if blobPtr == 0 {
-			return nil
-		}
-		blobLen := e.readI64(e.outSlotB)
-		data, _ := e.mem.Read(blobPtr, uint32(blobLen))
-		cp := make([]byte, len(data))
-		copy(cp, data)
-		return cp
-	default:
-		return nil
-	}
-}
-
-// FetchAll fetches all remaining rows in a single WASM call and returns them
-// as a slice of []driver.Value rows. This is dramatically faster for large
-// result sets because it reduces WASM boundary crossings from O(rows*cols) to O(1).
-// After calling FetchAll, the Rows handle is consumed; call Close() afterward.
-func (r *Rows) FetchAll() ([][]any, error) {
-	if r.closed {
-		return nil, errRowsClosed
-	}
-	e := r.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// stoolap_rows_fetch_all(rows, &out_buf, &out_len) -> rc
-	// We need two output slots: out_buf (i32 ptr) and out_len (i64)
-	rc := e.call3(r.ctx, e.fnRowsFetchAll, uint64(r.ptr), uint64(e.outSlotA), uint64(e.outSlotB))
-	if int32(rc) != stoolapOK {
-		return nil, errors.New("stoolap-wasm: fetch_all failed")
-	}
-
-	bufPtr := e.readU32(e.outSlotA)
-	bufLen := e.readI64(e.outSlotB)
-	if bufPtr == 0 || bufLen == 0 {
-		return nil, nil
-	}
-
-	// Read the entire buffer from WASM memory into Go (one copy)
-	data, ok := e.mem.Read(bufPtr, uint32(bufLen))
-	if !ok {
-		return nil, errors.New("stoolap-wasm: failed to read fetch_all buffer")
-	}
-	// Copy before freeing WASM buffer
-	buf := make([]byte, len(data))
-	copy(buf, data)
-
-	// Free the WASM-side buffer
-	e.call2(r.ctx, e.fnBufferFree, uint64(bufPtr), uint64(bufLen))
-
-	// Parse the packed binary format in pure Go (zero WASM calls)
-	return parseFetchAllBuffer(buf)
-}
-
-// parseFetchAllBuffer parses the packed binary format from stoolap_rows_fetch_all.
-func parseFetchAllBuffer(buf []byte) ([][]any, error) {
-	if len(buf) < 4 {
-		return nil, nil
-	}
-	off := 0
-
-	// Column count
-	colCount := int(binary.LittleEndian.Uint32(buf[off:]))
-	off += 4
-
-	// Skip column names
-	for range colCount {
-		if off+2 > len(buf) {
-			return nil, errors.New("stoolap-wasm: truncated column name")
-		}
-		nameLen := int(binary.LittleEndian.Uint16(buf[off:]))
-		off += 2 + nameLen
-	}
-
-	// Row count
-	if off+4 > len(buf) {
-		return nil, errors.New("stoolap-wasm: truncated row count")
-	}
-	rowCount := int(binary.LittleEndian.Uint32(buf[off:]))
-	off += 4
-
-	rows := make([][]any, 0, rowCount)
-	for range rowCount {
-		row := make([]any, colCount)
-		for c := range colCount {
-			if off >= len(buf) {
-				return nil, errors.New("stoolap-wasm: truncated row data")
-			}
-			typeTag := buf[off]
-			off++
-
-			switch typeTag {
-			case typeNull:
-				row[c] = nil
-			case typeInteger:
-				row[c] = int64(binary.LittleEndian.Uint64(buf[off:]))
-				off += 8
-			case typeFloat:
-				row[c] = math.Float64frombits(binary.LittleEndian.Uint64(buf[off:]))
-				off += 8
-			case typeText, typeJSON:
-				sLen := int(binary.LittleEndian.Uint32(buf[off:]))
-				off += 4
-				row[c] = string(buf[off : off+sLen])
-				off += sLen
-			case typeBoolean:
-				row[c] = buf[off] != 0
-				off++
-			case typeTimestamp:
-				nanos := int64(binary.LittleEndian.Uint64(buf[off:]))
-				off += 8
-				row[c] = time.Unix(nanos/1e9, nanos%1e9).UTC()
-			case typeBlob:
-				bLen := int(binary.LittleEndian.Uint32(buf[off:]))
-				off += 4
-				blob := make([]byte, bLen)
-				copy(blob, buf[off:off+bLen])
-				off += bLen
-				row[c] = blob
-			default:
-				row[c] = nil
-			}
-		}
-		rows = append(rows, row)
-	}
-	return rows, nil
-}
-
-func (r *Rows) Close() error {
-	if r.closed {
-		return nil
-	}
-	r.closed = true
-	e := r.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.callVoid1(r.ctx, e.fnRowsClose, uint64(r.ptr))
-	return nil
+	return &Tx{engine: e, db: db, ptr: e.readU32(e.outSlotA)}, nil
 }
 
 // ─── Stmt ───────────────────────────────────────────────────────────────────
 
+// Stmt is a prepared statement.
 type Stmt struct {
 	engine *Engine
+	db     *DB
 	ptr    uint32
 }
 
+// ExecContext executes the statement with positional parameters.
 func (s *Stmt) ExecContext(ctx context.Context, args []any) (sql.Result, error) {
+	return s.execIn(ctx, 0, args, nil)
+}
+
+// ExecNamed executes the statement with named parameters (:name).
+func (s *Stmt) ExecNamed(ctx context.Context, args []sql.NamedArg) (sql.Result, error) {
+	return s.execIn(ctx, 0, nil, args)
+}
+
+// execIn runs the statement, inside tx when tx is not 0.
+func (s *Stmt) execIn(ctx context.Context, tx uint32, args []any, named []sql.NamedArg) (sql.Result, error) {
+	if s.ptr == 0 {
+		return nil, errStmtClosed
+	}
 	e := s.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.arenaReset()
 
-	var paramsPtr uint32
-	if len(args) > 0 {
-		var err error
-		paramsPtr, err = e.writeParams(ctx, args)
-		if err != nil {
-			return nil, err
-		}
+	paramsPtr, err := e.stageParams(ctx, args, named)
+	if err != nil {
+		return nil, err
 	}
-
-	rc := e.call4(ctx, e.fnStmtExec, uint64(s.ptr), uint64(paramsPtr), uint64(len(args)), uint64(e.outSlotB))
+	fn, n := e.fnStmtExec, len(args)
+	if len(named) > 0 {
+		fn, n = e.fnStmtExecNamed, len(named)
+	}
+	var rc uint64
+	if tx != 0 {
+		if fn == e.fnStmtExec {
+			fn = e.fnTxStmtExec
+		} else {
+			fn = e.fnTxStmtExecNamed
+		}
+		rc = e.call5(ctx, fn, uint64(tx), uint64(s.ptr), uint64(paramsPtr), uint64(n), uint64(e.outSlotB))
+	} else {
+		rc = e.call4(ctx, fn, uint64(s.ptr), uint64(paramsPtr), uint64(n), uint64(e.outSlotB))
+	}
 	if int32(rc) != stoolapOK {
-		return nil, e.errFromStmt(ctx, s.ptr)
+		return nil, s.errIn(ctx, tx)
 	}
 	return execResult(e.readI64(e.outSlotB)), nil
 }
 
-func (s *Stmt) QueryContext(ctx context.Context, args []any) (*Rows, error) {
+// errIn reads the error of the last call: from the transaction for the
+// stoolap_tx_stmt_* entry points, otherwise from the statement.
+func (s *Stmt) errIn(ctx context.Context, tx uint32) error {
+	if tx != 0 {
+		return s.engine.errFrom(ctx, s.engine.fnTxErrmsg, tx)
+	}
+	return s.engine.errFrom(ctx, s.engine.fnStmtErrmsg, s.ptr)
+}
+
+// ExecBatch executes a prepared statement once per row inside a single
+// transaction. One WASM call replaces begin + N x exec + commit. Every row
+// must have the same number of parameters. On error the transaction is
+// rolled back and nothing is applied. The result reports total rows affected.
+func (s *Stmt) ExecBatch(ctx context.Context, rows [][]any) (sql.Result, error) {
+	if s.ptr == 0 {
+		return nil, errStmtClosed
+	}
+	if s.db.ptr == 0 {
+		return nil, errDBClosed
+	}
+	if len(rows) == 0 {
+		return execResult(0), nil
+	}
 	e := s.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.arenaReset()
 
-	var paramsPtr uint32
-	if len(args) > 0 {
-		var err error
-		paramsPtr, err = e.writeParams(ctx, args)
-		if err != nil {
-			return nil, err
-		}
+	paramsPtr, ppr, err := e.stageBatch(ctx, rows)
+	if err != nil {
+		return nil, err
 	}
-
-	rc := e.call4(ctx, e.fnStmtQuery, uint64(s.ptr), uint64(paramsPtr), uint64(len(args)), uint64(e.outSlotA))
+	rc := e.call6(ctx, e.fnStmtExecBatch, uint64(s.db.ptr), uint64(s.ptr), uint64(paramsPtr),
+		uint64(uint32(ppr)), uint64(uint32(len(rows))), uint64(e.outSlotB))
 	if int32(rc) != stoolapOK {
-		return nil, e.errFromStmt(ctx, s.ptr)
+		return nil, e.errFrom(ctx, e.fnErrmsg, s.db.ptr)
 	}
-	rowsPtr := e.readU32(e.outSlotA)
-	n := int32(e.call1(ctx, e.fnRowsColCount, uint64(rowsPtr)))
-	return &Rows{engine: e, ptr: rowsPtr, ctx: ctx, colCount: int(n), colTypes: make([]int32, n)}, nil
+	return execResult(e.readI64(e.outSlotB)), nil
 }
 
+// QueryContext executes the statement with positional parameters and returns
+// a chunked Rows over its result.
+func (s *Stmt) QueryContext(ctx context.Context, args []any) (*Rows, error) {
+	return s.query(ctx, args, nil)
+}
+
+// QueryNamed executes the statement with named parameters (:name).
+func (s *Stmt) QueryNamed(ctx context.Context, args []sql.NamedArg) (*Rows, error) {
+	return s.query(ctx, nil, args)
+}
+
+func (s *Stmt) query(ctx context.Context, args []any, named []sql.NamedArg) (*Rows, error) {
+	if s.ptr == 0 {
+		return nil, errStmtClosed
+	}
+	e := s.engine
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	paramsPtr, err := e.stageParams(ctx, args, named)
+	if err != nil {
+		return nil, err
+	}
+	fn, n := e.fnStmtQuery, len(args)
+	if len(named) > 0 {
+		fn, n = e.fnStmtQueryNamed, len(named)
+	}
+	rc := e.call4(ctx, fn, uint64(s.ptr), uint64(paramsPtr), uint64(n), uint64(e.outSlotA))
+	if int32(rc) != stoolapOK {
+		return nil, e.errFrom(ctx, e.fnStmtErrmsg, s.ptr)
+	}
+	return newRows(e, ctx, e.readU32(e.outSlotA)), nil
+}
+
+// QueryAll runs the statement with positional parameters and returns every
+// row in one WASM call.
+func (s *Stmt) QueryAll(ctx context.Context, args []any) (*ResultSet, error) {
+	cols, rows, err := s.queryAllPacked(ctx, 0, args, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &ResultSet{Columns: cols, Rows: rows}, nil
+}
+
+// QueryNamedAll runs the statement with named parameters (:name) and returns
+// every row in one WASM call.
+func (s *Stmt) QueryNamedAll(ctx context.Context, args []sql.NamedArg) (*ResultSet, error) {
+	cols, rows, err := s.queryAllPacked(ctx, 0, nil, args)
+	if err != nil {
+		return nil, err
+	}
+	return &ResultSet{Columns: cols, Rows: rows}, nil
+}
+
+// queryAllPacked runs stoolap_stmt_query_all, or the named variant, inside
+// tx when tx is not 0, and decodes the packed result.
+func (s *Stmt) queryAllPacked(ctx context.Context, tx uint32, args []any, named []sql.NamedArg) ([]string, [][]any, error) {
+	if s.ptr == 0 {
+		return nil, nil, errStmtClosed
+	}
+	e := s.engine
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	paramsPtr, err := e.stageParams(ctx, args, named)
+	if err != nil {
+		return nil, nil, err
+	}
+	fn, n := e.fnStmtQueryAll, len(args)
+	if len(named) > 0 {
+		fn, n = e.fnStmtQueryNamedAll, len(named)
+	}
+	rc := e.call6(ctx, fn, uint64(s.ptr), uint64(tx), uint64(paramsPtr), uint64(n), uint64(e.outSlotA), uint64(e.outSlotB))
+	if int32(rc) != stoolapOK {
+		return nil, nil, e.errFrom(ctx, e.fnStmtErrmsg, s.ptr)
+	}
+	return e.decodePacked(e.readU32(e.outSlotA), e.readI64(e.outSlotB))
+}
+
+// Close destroys the prepared statement.
 func (s *Stmt) Close() error {
 	if s.ptr == 0 {
 		return nil
@@ -656,145 +498,121 @@ func (s *Stmt) Close() error {
 
 // ─── Tx ─────────────────────────────────────────────────────────────────────
 
+// Tx is a transaction. Commit and Rollback consume it.
 type Tx struct {
 	engine *Engine
+	db     *DB
 	ptr    uint32
 }
 
-func (tx *Tx) Exec(ctx context.Context, query string) (sql.Result, error) {
+func (tx *Tx) execEntry() sqlEntry {
 	e := tx.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.arenaReset()
-
-	sqlPtr, mustFree := e.writeSQLFallback(ctx, query)
-	if sqlPtr == 0 {
-		return nil, errors.New("stoolap-wasm: failed to write SQL")
-	}
-	defer func() {
-		if mustFree {
-			e.free.Call(ctx, uint64(sqlPtr), uint64(len(query)+1), 1)
-		}
-	}()
-
-	rc := e.call3(ctx, e.fnTxExec, uint64(tx.ptr), uint64(sqlPtr), uint64(e.outSlotB))
-	if int32(rc) != stoolapOK {
-		return nil, e.errFromTx(ctx, tx.ptr)
-	}
-	return execResult(e.readI64(e.outSlotB)), nil
+	return sqlEntry{plain: e.fnTxExec, positional: e.fnTxExecParams, named: e.fnTxExecNamed, errmsg: e.fnTxErrmsg}
 }
 
+func (tx *Tx) queryEntry() sqlEntry {
+	e := tx.engine
+	return sqlEntry{plain: e.fnTxQuery, positional: e.fnTxQueryParams, named: e.fnTxQueryNamed, errmsg: e.fnTxErrmsg}
+}
+
+// Exec executes a SQL statement within the transaction.
+func (tx *Tx) Exec(ctx context.Context, query string) (sql.Result, error) {
+	return tx.ExecParams(ctx, query, nil)
+}
+
+// ExecParams executes a SQL statement with positional parameters within the transaction.
 func (tx *Tx) ExecParams(ctx context.Context, query string, args []any) (sql.Result, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
+	}
 	e := tx.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.arenaReset()
+	return e.execOn(ctx, tx.execEntry(), tx.ptr, query, args, nil)
+}
 
-	sqlPtr, mustFree := e.writeSQLFallback(ctx, query)
-	if sqlPtr == 0 {
-		return nil, errors.New("stoolap-wasm: failed to write SQL")
+// ExecNamed executes a SQL statement with named parameters (:name) within the transaction.
+func (tx *Tx) ExecNamed(ctx context.Context, query string, args []sql.NamedArg) (sql.Result, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
 	}
-	defer func() {
-		if mustFree {
-			e.free.Call(ctx, uint64(sqlPtr), uint64(len(query)+1), 1)
-		}
-	}()
+	e := tx.engine
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.execOn(ctx, tx.execEntry(), tx.ptr, query, nil, args)
+}
 
-	if len(args) == 0 {
-		rc := e.call3(ctx, e.fnTxExec, uint64(tx.ptr), uint64(sqlPtr), uint64(e.outSlotB))
-		if int32(rc) != stoolapOK {
-			return nil, e.errFromTx(ctx, tx.ptr)
-		}
-		return execResult(e.readI64(e.outSlotB)), nil
+// Query executes a query within the transaction.
+func (tx *Tx) Query(ctx context.Context, query string) (*Rows, error) {
+	return tx.QueryParams(ctx, query, nil)
+}
+
+// QueryParams executes a query with positional parameters within the transaction.
+func (tx *Tx) QueryParams(ctx context.Context, query string, args []any) (*Rows, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
 	}
+	e := tx.engine
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.queryOn(ctx, tx.queryEntry(), tx.ptr, query, args, nil)
+}
 
-	paramsPtr, err := e.writeParams(ctx, args)
+// QueryNamed executes a query with named parameters (:name) within the transaction.
+func (tx *Tx) QueryNamed(ctx context.Context, query string, args []sql.NamedArg) (*Rows, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
+	}
+	e := tx.engine
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.queryOn(ctx, tx.queryEntry(), tx.ptr, query, nil, args)
+}
+
+// QueryAll runs a query with positional parameters inside the transaction
+// and returns every row in one WASM call.
+func (tx *Tx) QueryAll(ctx context.Context, query string, args []any) (*ResultSet, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
+	}
+	cols, rows, err := tx.db.queryAllPacked(ctx, tx.ptr, query, args, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	rc := e.call5(ctx, e.fnTxExecParams, uint64(tx.ptr), uint64(sqlPtr), uint64(paramsPtr), uint64(len(args)), uint64(e.outSlotB))
-	if int32(rc) != stoolapOK {
-		return nil, e.errFromTx(ctx, tx.ptr)
-	}
-	return execResult(e.readI64(e.outSlotB)), nil
+	return &ResultSet{Columns: cols, Rows: rows}, nil
 }
 
-func (tx *Tx) Query(ctx context.Context, query string) (*Rows, error) {
-	e := tx.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.arenaReset()
-
-	sqlPtr, mustFree := e.writeSQLFallback(ctx, query)
-	if sqlPtr == 0 {
-		return nil, errors.New("stoolap-wasm: failed to write SQL")
+// QueryNamedAll runs a query with named parameters (:name) inside the
+// transaction and returns every row in one WASM call.
+func (tx *Tx) QueryNamedAll(ctx context.Context, query string, args []sql.NamedArg) (*ResultSet, error) {
+	if tx.ptr == 0 {
+		return nil, errTxDone
 	}
-	defer func() {
-		if mustFree {
-			e.free.Call(ctx, uint64(sqlPtr), uint64(len(query)+1), 1)
-		}
-	}()
-
-	rc := e.call3(ctx, e.fnTxQuery, uint64(tx.ptr), uint64(sqlPtr), uint64(e.outSlotA))
-	if int32(rc) != stoolapOK {
-		return nil, e.errFromTx(ctx, tx.ptr)
+	cols, rows, err := tx.db.queryAllPacked(ctx, tx.ptr, query, nil, args)
+	if err != nil {
+		return nil, err
 	}
-	rowsPtr := e.readU32(e.outSlotA)
-	n := int32(e.call1(ctx, e.fnRowsColCount, uint64(rowsPtr)))
-	return &Rows{engine: e, ptr: rowsPtr, ctx: ctx, colCount: int(n), colTypes: make([]int32, n)}, nil
+	return &ResultSet{Columns: cols, Rows: rows}, nil
 }
 
-// QueryParams executes a query with parameters within the transaction.
-func (tx *Tx) QueryParams(ctx context.Context, query string, args []any) (*Rows, error) {
-	e := tx.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.arenaReset()
-
-	sqlPtr, mustFree := e.writeSQLFallback(ctx, query)
-	if sqlPtr == 0 {
-		return nil, errors.New("stoolap-wasm: failed to write SQL")
-	}
-	defer func() {
-		if mustFree {
-			e.free.Call(ctx, uint64(sqlPtr), uint64(len(query)+1), 1)
-		}
-	}()
-
-	if len(args) == 0 {
-		rc := e.call3(ctx, e.fnTxQuery, uint64(tx.ptr), uint64(sqlPtr), uint64(e.outSlotA))
-		if int32(rc) != stoolapOK {
-			return nil, e.errFromTx(ctx, tx.ptr)
-		}
-	} else {
-		paramsPtr, err := e.writeParams(ctx, args)
-		if err != nil {
-			return nil, err
-		}
-		rc := e.call5(ctx, e.fnTxQueryParams, uint64(tx.ptr), uint64(sqlPtr), uint64(paramsPtr), uint64(len(args)), uint64(e.outSlotA))
-		if int32(rc) != stoolapOK {
-			return nil, e.errFromTx(ctx, tx.ptr)
-		}
-	}
-	rowsPtr := e.readU32(e.outSlotA)
-	n := int32(e.call1(ctx, e.fnRowsColCount, uint64(rowsPtr)))
-	return &Rows{engine: e, ptr: rowsPtr, ctx: ctx, colCount: int(n), colTypes: make([]int32, n)}, nil
-}
-
+// Commit commits the transaction.
 func (tx *Tx) Commit() error {
+	if tx.ptr == 0 {
+		return errTxDone
+	}
 	e := tx.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	ctx := context.Background()
 	rc := e.call1(ctx, e.fnTxCommit, uint64(tx.ptr))
 	if int32(rc) != stoolapOK {
-		return e.errFromTx(ctx, tx.ptr)
+		return e.errFrom(ctx, e.fnTxErrmsg, tx.ptr)
 	}
 	tx.ptr = 0
 	return nil
 }
 
+// Rollback rolls the transaction back. Rolling back a finished transaction is a no-op.
 func (tx *Tx) Rollback() error {
 	if tx.ptr == 0 {
 		return nil

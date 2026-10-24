@@ -22,7 +22,6 @@ import (
 	"errors"
 	"io"
 	"sync"
-	"time"
 )
 
 // wasmEngine is the global engine set by SetWASM().
@@ -175,6 +174,16 @@ func (c *driverConn) ExecContext(ctx context.Context, query string, args []drive
 	if c.closed {
 		return nil, driver.ErrBadConn
 	}
+	if hasNamed(args) {
+		named, err := toNamedArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		if c.tx != nil {
+			return c.tx.ExecNamed(ctx, query, named)
+		}
+		return c.db.ExecNamed(ctx, query, named)
+	}
 	goArgs := namedToAny(args)
 
 	if c.tx != nil {
@@ -193,27 +202,36 @@ func (c *driverConn) QueryContext(ctx context.Context, query string, args []driv
 	if c.closed {
 		return nil, driver.ErrBadConn
 	}
-	goArgs := namedToAny(args)
-
-	var r *Rows
-	var err error
-	if c.tx != nil {
-		if len(goArgs) == 0 {
-			r, err = c.tx.Query(ctx, query)
-		} else {
-			r, err = c.tx.QueryParams(ctx, query, goArgs)
+	tx, err := c.txPtr()
+	if err != nil {
+		return nil, err
+	}
+	var cols []string
+	var rows [][]any
+	if hasNamed(args) {
+		named, err := toNamedArgs(args)
+		if err != nil {
+			return nil, err
 		}
+		cols, rows, err = c.db.queryAllPacked(ctx, tx, query, nil, named)
 	} else {
-		if len(goArgs) == 0 {
-			r, err = c.db.Query(ctx, query)
-		} else {
-			r, err = c.db.QueryParams(ctx, query, goArgs)
-		}
+		cols, rows, err = c.db.queryAllPacked(ctx, tx, query, namedToAny(args), nil)
 	}
 	if err != nil {
 		return nil, err
 	}
-	return newDriverRows(r), nil
+	return &driverRows{cols: cols, rows: rows}, nil
+}
+
+// txPtr returns the open transaction of the connection, or 0.
+func (c *driverConn) txPtr() (uint32, error) {
+	if c.tx == nil {
+		return 0, nil
+	}
+	if c.tx.ptr == 0 {
+		return 0, errTxDone
+	}
+	return c.tx.ptr, nil
 }
 
 func (c *driverConn) Ping(ctx context.Context) error {
@@ -286,88 +304,97 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 }
 
 func (s *driverStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	return s.stmt.ExecContext(ctx, namedToAny(args))
-}
-
-func (s *driverStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	r, err := s.stmt.QueryContext(ctx, namedToAny(args))
+	tx, err := s.conn.txPtr()
 	if err != nil {
 		return nil, err
 	}
-	return newDriverRows(r), nil
+	if hasNamed(args) {
+		named, err := toNamedArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		return s.stmt.execIn(ctx, tx, nil, named)
+	}
+	return s.stmt.execIn(ctx, tx, namedToAny(args), nil)
+}
+
+func (s *driverStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	tx, err := s.conn.txPtr()
+	if err != nil {
+		return nil, err
+	}
+	var cols []string
+	var rows [][]any
+	if hasNamed(args) {
+		named, err := toNamedArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		cols, rows, err = s.stmt.queryAllPacked(ctx, tx, nil, named)
+	} else {
+		cols, rows, err = s.stmt.queryAllPacked(ctx, tx, namedToAny(args), nil)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &driverRows{cols: cols, rows: rows}, nil
 }
 
 // ─── Driver Rows ────────────────────────────────────────────────────────────
 
-// driverRows uses FetchAll to pull all data from WASM in one call,
-// then serves rows from Go memory. WASM is free after the first Next().
+// driverRows serves a result that one WASM call decoded in full. The engine
+// hands every row back packed, so there is no handle to iterate or close.
 type driverRows struct {
-	rows     *Rows
-	allRows  [][]any // buffered from FetchAll
-	cursor   int     // current row index
-	fetched  bool
-	colCount int
-}
-
-func newDriverRows(r *Rows) *driverRows {
-	return &driverRows{rows: r, colCount: r.colCount}
+	cols   []string
+	rows   [][]any
+	cursor int
 }
 
 func (r *driverRows) Columns() []string {
-	return r.rows.Columns()
+	return r.cols
 }
 
 func (r *driverRows) Close() error {
-	r.allRows = nil
-	return r.rows.Close()
+	r.rows = nil
+	return nil
 }
 
 func (r *driverRows) Next(dest []driver.Value) error {
-	// First call: fetch everything from WASM in one shot, then free WASM
-	if !r.fetched {
-		r.fetched = true
-		allRows, err := r.rows.FetchAll()
-		if err != nil {
-			return err
-		}
-		r.allRows = allRows
-		r.cursor = 0
-	}
-
-	if r.cursor >= len(r.allRows) {
+	if r.cursor >= len(r.rows) {
 		return io.EOF
 	}
-
-	row := r.allRows[r.cursor]
+	row := r.rows[r.cursor]
 	r.cursor++
-
-	for i := 0; i < r.colCount && i < len(row); i++ {
-		if row[i] == nil {
-			dest[i] = nil
-			continue
-		}
-		// Convert any to driver.Value
-		switch v := row[i].(type) {
-		case int64:
-			dest[i] = v
-		case float64:
-			dest[i] = v
-		case string:
-			dest[i] = v
-		case bool:
-			dest[i] = v
-		case time.Time:
-			dest[i] = v
-		case []byte:
-			dest[i] = v
-		default:
-			dest[i] = v
-		}
+	for i := range dest {
+		dest[i] = row[i]
 	}
 	return nil
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
+
+var errMixedArgs = errors.New("stoolap-wasm: cannot mix named and positional arguments")
+
+func hasNamed(args []driver.NamedValue) bool {
+	for i := range args {
+		if args[i].Name != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// toNamedArgs converts database/sql named values. Every argument must carry a name.
+func toNamedArgs(args []driver.NamedValue) ([]sql.NamedArg, error) {
+	out := make([]sql.NamedArg, len(args))
+	for i, a := range args {
+		if a.Name == "" {
+			return nil, errMixedArgs
+		}
+		out[i] = sql.NamedArg{Name: a.Name, Value: a.Value}
+	}
+	return out, nil
+}
 
 func namedToAny(args []driver.NamedValue) []any {
 	if len(args) == 0 {
