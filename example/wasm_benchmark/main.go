@@ -30,7 +30,6 @@ import (
 	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/stoolap/stoolap-go/wasm"
 )
 
