@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 env:
-  STOOLAP_ENGINE_REF: v0.4.2
+  STOOLAP_ENGINE_REF: 1036e74e186fa1c8ba994547a479dc825440abbf
 
 jobs:
   build:
@@ -36,7 +36,10 @@ jobs:
     runs-on: ${{ matrix.settings.host }}
     steps:
       - name: Clone stoolap engine
-        run: git clone --depth 1 --branch ${{ env.STOOLAP_ENGINE_REF }} https://github.com/stoolap/stoolap.git stoolap-engine
+        run: |
+          git init stoolap-engine
+          git -C stoolap-engine fetch --depth 1 https://github.com/stoolap/stoolap.git ${{ env.STOOLAP_ENGINE_REF }}
+          git -C stoolap-engine checkout FETCH_HEAD
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -96,7 +99,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Clone stoolap engine
-        run: git clone --depth 1 --branch ${{ env.STOOLAP_ENGINE_REF }} https://github.com/stoolap/stoolap.git stoolap-engine
+        run: |
+          git init stoolap-engine
+          git -C stoolap-engine fetch --depth 1 https://github.com/stoolap/stoolap.git ${{ env.STOOLAP_ENGINE_REF }}
+          git -C stoolap-engine checkout FETCH_HEAD
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -242,9 +248,9 @@ jobs:
       - name: Update go.mod versions
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          sed -i "s|lib/darwin_arm64 v[0-9.]*|lib/darwin_arm64 v${VERSION}|" go.mod
-          sed -i "s|lib/linux_amd64 v[0-9.]*|lib/linux_amd64 v${VERSION}|" go.mod
-          sed -i "s|lib/windows_amd64 v[0-9.]*|lib/windows_amd64 v${VERSION}|" go.mod
+          sed -i "s|lib/darwin_arm64 v[0-9A-Za-z.+-]*|lib/darwin_arm64 v${VERSION}|" go.mod
+          sed -i "s|lib/linux_amd64 v[0-9A-Za-z.+-]*|lib/linux_amd64 v${VERSION}|" go.mod
+          sed -i "s|lib/windows_amd64 v[0-9A-Za-z.+-]*|lib/windows_amd64 v${VERSION}|" go.mod
 
       - name: Commit libraries and WASM
         run: |
@@ -299,4 +305,5 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: release/*
