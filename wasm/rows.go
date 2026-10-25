@@ -342,9 +342,11 @@ func (r *Rows) timestamp(i int) (time.Time, bool) {
 
 // timestampLayouts covers the forms the engine's parse_timestamp accepts:
 // RFC 3339 with Z or an offset in any spelling, ISO and SQL style with an
-// optional fraction, a bare date, and the slash form with a time. Layouts
-// without a zone are read as UTC, as the engine does. The engine also takes
-// single digit fields and second 60; this parser does not.
+// optional fraction, the slash form with a time, and a bare date with
+// dashes or slashes, year first or last; a slash date both the US and the
+// European form can read is the US form, month first, as in the engine.
+// Layouts without a zone are read as UTC, as the engine does. The engine
+// also takes single digit fields and second 60; this parser does not.
 var timestampLayouts = [...]string{
 	"2006-01-02T15:04:05.999999999Z07:00",
 	"2006-01-02T15:04:05.999999999-0700",
@@ -353,10 +355,13 @@ var timestampLayouts = [...]string{
 	"2006-01-02 15:04:05.999999999",
 	"2006-01-02",
 	"2006/01/02 15:04:05",
+	"2006/01/02",
+	"01/02/2006",
+	"02/01/2006",
 }
 
-// parseTimestamp parses s with timestampLayouts. A time without a date takes
-// today's date, as in the engine.
+// parseTimestamp parses s with timestampLayouts. A time without a date is
+// that time on 1970-01-01, as in the engine.
 func parseTimestamp(s string) (time.Time, bool) {
 	s = strings.TrimSpace(s)
 	for _, layout := range timestampLayouts {
@@ -366,8 +371,7 @@ func parseTimestamp(s string) (time.Time, bool) {
 	}
 	for _, layout := range [...]string{"15:04:05.999999999", "15:04"} {
 		if t, err := time.Parse(layout, s); err == nil {
-			y, m, d := time.Now().UTC().Date()
-			return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC), true
+			return time.Date(1970, 1, 1, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC), true
 		}
 	}
 	return time.Time{}, false
