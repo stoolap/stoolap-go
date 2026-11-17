@@ -327,24 +327,28 @@ func (r *Rows) timestamp(i int) (time.Time, bool) {
 }
 
 // timestampLayouts covers the forms the engine's parse_timestamp accepts:
-// RFC 3339 with Z or an offset in any spelling, ISO and SQL style with an
-// optional fraction, the slash form with a time, and a bare date with
-// dashes or slashes, year first or last; a slash date both the US and the
+// ISO (T) and SQL style (space) date-times with an optional fraction and an
+// optional zone written as Z, +HH, +HHMM or +HH:MM, with or without a space
+// before it; the slash form with a time; and a bare date with dashes or
+// slashes, year first or last, where a slash date both the US and the
 // European form can read is the US form, month first, as in the engine.
 // Layouts without a zone are read as UTC, as the engine does. The engine
 // also takes single digit fields and second 60; this parser does not.
-var timestampLayouts = [...]string{
-	"2006-01-02T15:04:05.999999999Z07:00",
-	"2006-01-02T15:04:05.999999999-0700",
-	"2006-01-02T15:04:05.999999999 Z07:00",
-	"2006-01-02T15:04:05.999999999",
-	"2006-01-02 15:04:05.999999999",
-	"2006-01-02",
-	"2006/01/02 15:04:05",
-	"2006/01/02",
-	"01/02/2006",
-	"02/01/2006",
-}
+var timestampLayouts = func() []string {
+	layouts := make([]string, 0, 19)
+	for _, sep := range [...]string{"T", " "} {
+		for _, zone := range [...]string{"Z07:00", "Z0700", "Z07", " Z07:00", " Z0700", " Z07", ""} {
+			layouts = append(layouts, "2006-01-02"+sep+"15:04:05.999999999"+zone)
+		}
+	}
+	return append(layouts,
+		"2006-01-02",
+		"2006/01/02 15:04:05",
+		"2006/01/02",
+		"01/02/2006",
+		"02/01/2006",
+	)
+}()
 
 // parseTimestamp parses s with timestampLayouts. A time without a date is
 // that time on 1970-01-01, as in the engine.
